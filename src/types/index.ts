@@ -116,6 +116,19 @@ export interface Contract {
   jobTitle?: string
 }
 
+export interface Milestone {
+  id: string
+  contractId: string
+  userId: string
+  title: string
+  description: string
+  amount: number
+  dueDate: string
+  status: 'pending' | 'in_progress' | 'submitted' | 'approved' | 'rejected'
+  createdAt: string
+  updatedAt: string
+}
+
 export interface Wallet {
   id: string
   userId: string

@@ -21,30 +21,17 @@ const categories = [
 ]
 
 const steps = [
-  {
-    step: '01',
-    title: 'Post Your Project',
-    desc: 'Describe your project and budget. Get proposals from skilled freelancers within hours.',
-    icon: Briefcase,
-  },
-  {
-    step: '02',
-    title: 'Hire with Confidence',
-    desc: 'Review proposals, check portfolios, and hire the best fit. Funds held securely in escrow.',
-    icon: Shield,
-  },
-  {
-    step: '03',
-    title: 'Work & Collaborate',
-    desc: 'Communicate directly, track progress, review deliverables with full transparency.',
-    icon: Users,
-  },
-  {
-    step: '04',
-    title: 'Pay When Satisfied',
-    desc: 'Approve the work. Admin releases payment to the freelancer. Zero risk for both parties.',
-    icon: CheckCircle,
-  },
+  { step: '01', title: 'Post Your Project', desc: 'Describe your project and budget. Get proposals from skilled freelancers within hours.', icon: Briefcase },
+  { step: '02', title: 'Hire with Confidence', desc: 'Review proposals, check portfolios, and hire the best fit. Funds held securely in escrow.', icon: Shield },
+  { step: '03', title: 'Work & Collaborate', desc: 'Communicate directly, track progress, review deliverables with full transparency.', icon: Users },
+  { step: '04', title: 'Pay When Satisfied', desc: 'Approve the work. Admin releases payment to the freelancer. Zero risk for both parties.', icon: CheckCircle },
+]
+
+const trustFeatures = [
+  { icon: Shield, title: 'Escrow Payment Protection', desc: 'Your payment is held securely until you approve the work. Zero risk of losing money.' },
+  { icon: Star, title: 'Verified Freelancer Profiles', desc: 'All freelancers are reviewed. View portfolios, ratings, and work history before hiring.' },
+  { icon: Users, title: 'Dedicated Support', desc: 'Our admin team resolves disputes fairly and ensures smooth project completion.' },
+  { icon: DollarSign, title: 'Transparent Pricing', desc: 'No hidden fees. 10% platform commission only on successful project completion.' },
 ]
 
 export function LandingPage() {
@@ -59,8 +46,7 @@ export function LandingPage() {
               Trusted by 10,000+ businesses worldwide
             </div>
             <h1 className="text-5xl md:text-6xl lg:text-7xl font-bold text-white leading-tight mb-6">
-              Hire Top Freelancers
-              <br />
+              Hire Top Freelancers<br />
               <span className="text-amber-400">Pay When Satisfied</span>
             </h1>
             <p className="text-xl text-white/70 mb-10 max-w-2xl leading-relaxed">
@@ -68,24 +54,13 @@ export function LandingPage() {
               your money is safe until you're 100% happy with the work.
             </p>
             <div className="flex flex-col sm:flex-row gap-4">
-              <Button
-                size="lg"
-                className="gradient-amber border-0 text-white hover:opacity-90 text-base px-8 h-12"
-                onClick={() => blink.auth.login()}
-              >
+              <Button size="lg" className="gradient-amber border-0 text-white hover:opacity-90 text-base px-8 h-12" onClick={() => blink.auth.login()}>
                 Start Hiring <ArrowRight size={18} className="ml-2" />
               </Button>
-              <Button
-                size="lg"
-                variant="outline"
-                className="border-white/30 text-white hover:bg-white/10 text-base px-8 h-12 bg-transparent"
-                onClick={() => blink.auth.login()}
-              >
+              <Button size="lg" variant="outline" className="border-white/30 text-white hover:bg-white/10 text-base px-8 h-12 bg-transparent" onClick={() => blink.auth.login()}>
                 Become a Freelancer
               </Button>
             </div>
-
-            {/* Quick tags */}
             <div className="mt-12 flex items-center gap-3 flex-wrap">
               <span className="text-white/50 text-sm">Popular:</span>
               {['React Developer', 'UI Designer', 'Content Writer', 'SEO Expert'].map(tag => (
@@ -130,7 +105,7 @@ export function LandingPage() {
               <div key={step} className="relative">
                 <div className="text-6xl font-black text-muted/50 mb-4 leading-none">{step}</div>
                 <div className="w-12 h-12 rounded-xl bg-primary flex items-center justify-center mb-4">
-                  <Icon size={22} className="text-white" />
+                  <Icon size={22} className="text-primary-foreground" />
                 </div>
                 <h3 className="text-lg font-bold text-foreground mb-2">{title}</h3>
                 <p className="text-muted-foreground text-sm leading-relaxed">{desc}</p>
@@ -168,32 +143,9 @@ export function LandingPage() {
         <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
           <div className="grid lg:grid-cols-2 gap-16 items-center">
             <div>
-              <h2 className="text-4xl font-bold text-foreground mb-6">
-                Why Clients Trust FreelanceHub
-              </h2>
+              <h2 className="text-4xl font-bold text-foreground mb-6">Why Clients Trust FreelanceHub</h2>
               <div className="space-y-5">
-                {[
-                  {
-                    icon: Shield,
-                    title: 'Escrow Payment Protection',
-                    desc: 'Your payment is held securely until you approve the work. Zero risk of losing money.',
-                  },
-                  {
-                    icon: Star,
-                    title: 'Verified Freelancer Profiles',
-                    desc: 'All freelancers are reviewed. View portfolios, ratings, and work history before hiring.',
-                  },
-                  {
-                    icon: Users,
-                    title: 'Dedicated Support',
-                    desc: 'Our admin team resolves disputes fairly and ensures smooth project completion.',
-                  },
-                  {
-                    icon: DollarSign,
-                    title: 'Transparent Pricing',
-                    desc: 'No hidden fees. 10% platform commission only on successful project completion.',
-                  },
-                ].map(({ icon: Icon, title, desc }) => (
+                {trustFeatures.map(({ icon: Icon, title, desc }) => (
                   <div key={title} className="flex gap-4">
                     <div className="w-10 h-10 rounded-lg bg-accent/10 flex items-center justify-center shrink-0">
                       <Icon size={20} className="text-accent" />
@@ -209,23 +161,14 @@ export function LandingPage() {
             <div className="bg-card border border-border rounded-2xl p-8">
               <h3 className="text-2xl font-bold text-foreground mb-6">Ready to get started?</h3>
               <div className="space-y-3">
-                <Button
-                  className="w-full gradient-amber border-0 text-white hover:opacity-90 h-12 text-base"
-                  onClick={() => blink.auth.login()}
-                >
+                <Button className="w-full gradient-amber border-0 text-white hover:opacity-90 h-12 text-base" onClick={() => blink.auth.login()}>
                   Hire a Freelancer <ArrowRight size={18} className="ml-2" />
                 </Button>
-                <Button
-                  variant="outline"
-                  className="w-full h-12 text-base"
-                  onClick={() => blink.auth.login()}
-                >
+                <Button variant="outline" className="w-full h-12 text-base" onClick={() => blink.auth.login()}>
                   Find Work as Freelancer
                 </Button>
               </div>
-              <p className="text-muted-foreground text-xs text-center mt-4">
-                Free to join. No subscription required.
-              </p>
+              <p className="text-muted-foreground text-xs text-center mt-4">Free to join. No subscription required.</p>
             </div>
           </div>
         </div>
@@ -241,9 +184,7 @@ export function LandingPage() {
               </div>
               <span className="font-bold text-lg">FreelanceHub</span>
             </div>
-            <p className="text-white/50 text-sm">
-              © 2025 FreelanceHub. Admin-controlled escrow marketplace.
-            </p>
+            <p className="text-white/50 text-sm">© 2025 FreelanceHub. Admin-controlled escrow marketplace.</p>
           </div>
         </div>
       </footer>

@@ -1,308 +1,171 @@
-import { useQuery } from '@tanstack/react-query'
+import { useState, useEffect } from 'react'
 import { useNavigate, Link } from '@tanstack/react-router'
-import {
-  Briefcase, DollarSign, Clock, CheckCircle,
-  Search, User, AlertTriangle, ChevronRight, Wallet,
-} from 'lucide-react'
-import { blink, tables } from '../../blink/client'
-import { useAuth } from '../../hooks/useAuth'
-import { formatCurrency, formatDate } from '../../lib/utils'
-import { StatusBadge } from '../../components/ui/StatusBadge'
-import type { Contract, Proposal, Wallet as WalletType } from '../../types'
+import { DollarSign, Briefcase, Clock, CheckCircle, ArrowRight, TrendingUp } from 'lucide-react'
+import { Button } from '@/components/ui/button'
+import { Badge } from '@/components/ui/badge'
+import { useAuth } from '@/hooks/useAuth'
+import { tables } from '@/blink/client'
+import { formatCurrency, formatDate, getStatusColor, safeParseJSON } from '@/lib/utils'
+import type { Contract, Job, Wallet } from '@/types'
 
 export function FreelancerDashboard() {
   const { user, profile } = useAuth()
   const navigate = useNavigate()
+  const [contracts, setContracts] = useState<Contract[]>([])
+  const [suggestedJobs, setSuggestedJobs] = useState<Job[]>([])
+  const [wallet, setWallet] = useState<Wallet | null>(null)
+  const [loading, setLoading] = useState(true)
 
-  const { data: contracts = [], isLoading: contractsLoading } = useQuery({
-    queryKey: ['freelancer-contracts', user?.id],
-    queryFn: async () => {
-      if (!user?.id) return []
-      return await tables.contracts.list({
-        where: { userId: user.id },
-        orderBy: { createdAt: 'desc' },
-        limit: 10,
-      }) as Contract[]
-    },
-    enabled: !!user?.id,
-  })
+  useEffect(() => {
+    if (!user) return
+    loadData()
+  }, [user])
 
-  const { data: proposals = [], isLoading: proposalsLoading } = useQuery({
-    queryKey: ['freelancer-proposals', user?.id],
-    queryFn: async () => {
-      if (!user?.id) return []
-      return await tables.proposals.list({
-        where: { userId: user.id },
-        orderBy: { createdAt: 'desc' },
-        limit: 10,
-      }) as Proposal[]
-    },
-    enabled: !!user?.id,
-  })
+  async function loadData() {
+    if (!user) return
+    setLoading(true)
+    try {
+      const [contractsData, jobsData, walletData] = await Promise.all([
+        tables.contracts.list({ where: { userId: user.id }, limit: 20 }),
+        tables.jobs.list({ where: { status: 'open' }, limit: 5 }),
+        tables.wallets.list({ where: { userId: user.id }, limit: 1 }),
+      ])
+      setContracts(contractsData as Contract[])
+      setSuggestedJobs(jobsData as Job[])
+      setWallet((walletData[0] as Wallet) || null)
+    } catch {
+      // silently fail
+    } finally {
+      setLoading(false)
+    }
+  }
 
-  const { data: wallet } = useQuery({
-    queryKey: ['wallet', user?.id],
-    queryFn: async () => {
-      if (!user?.id) return null
-      const ws = await tables.wallets.list({ where: { userId: user.id }, limit: 1 })
-      return (ws[0] ?? null) as WalletType | null
-    },
-    enabled: !!user?.id,
-  })
-
-  const activeContracts = contracts.filter(c =>
-    ['active', 'submitted', 'revision'].includes(c.status)
-  )
-  const pendingProposals = proposals.filter(p => p.status === 'pending')
+  const activeContracts = contracts.filter(c => c.status === 'active' || c.status === 'submitted' || c.status === 'revision')
   const completedContracts = contracts.filter(c => c.status === 'completed')
 
-  const stats = [
-    {
-      label: 'Active Contracts',
-      value: contractsLoading ? '—' : activeContracts.length,
-      icon: Briefcase,
-      color: 'text-blue-600 bg-blue-50 dark:bg-blue-900/20 dark:text-blue-400',
-      href: '/freelancer/contracts',
-    },
-    {
-      label: 'Pending Proposals',
-      value: proposalsLoading ? '—' : pendingProposals.length,
-      icon: Clock,
-      color: 'text-yellow-600 bg-yellow-50 dark:bg-yellow-900/20 dark:text-yellow-400',
-      href: null,
-    },
-    {
-      label: 'Available Balance',
-      value: formatCurrency(wallet?.balance ?? 0),
-      icon: DollarSign,
-      color: 'text-green-600 bg-green-50 dark:bg-green-900/20 dark:text-green-400',
-      href: '/freelancer/wallet',
-    },
-    {
-      label: 'Completed Jobs',
-      value: contractsLoading ? '—' : completedContracts.length,
-      icon: CheckCircle,
-      color: 'text-purple-600 bg-purple-50 dark:bg-purple-900/20 dark:text-purple-400',
-      href: '/freelancer/contracts',
-    },
-  ]
-
-  const firstName = profile?.displayName?.split(' ')[0] ?? 'there'
+  if (!profile) return <div className="page-container"><p className="text-muted-foreground">Loading profile...</p></div>
 
   return (
-    <div className="page-container pt-24">
-      <div className="animate-fade-in">
-        {/* Suspension warning */}
-        {Number(profile?.isSuspended) > 0 && (
-          <div className="mb-6 p-4 bg-destructive/10 border border-destructive/20 rounded-xl flex items-start gap-3">
-            <AlertTriangle size={20} className="text-destructive flex-shrink-0 mt-0.5" />
-            <div>
-              <p className="font-semibold text-destructive">Account Suspended</p>
-              <p className="text-sm text-destructive/80">
-                Your account has been suspended. Please contact support for assistance.
-              </p>
+    <div className="page-container">
+      <div className="mb-8">
+        <h1 className="text-3xl font-bold text-foreground">Welcome back, {profile.displayName?.split(' ')[0]}! 👋</h1>
+        <p className="text-muted-foreground mt-1">Here's your freelance dashboard overview</p>
+      </div>
+
+      {/* Stats */}
+      <div className="grid grid-cols-2 lg:grid-cols-4 gap-4 mb-8">
+        {[
+          { label: 'Total Earned', value: formatCurrency(wallet?.totalEarned || 0), icon: DollarSign, color: 'text-emerald-600' },
+          { label: 'Wallet Balance', value: formatCurrency(wallet?.balance || 0), icon: TrendingUp, color: 'text-blue-600' },
+          { label: 'Active Contracts', value: activeContracts.length.toString(), icon: Clock, color: 'text-amber-600' },
+          { label: 'Completed Jobs', value: completedContracts.length.toString(), icon: CheckCircle, color: 'text-green-600' },
+        ].map(stat => (
+          <div key={stat.label} className="bg-card border border-border rounded-xl p-5">
+            <div className="flex items-center gap-2 mb-2">
+              <stat.icon size={16} className={stat.color} />
+              <span className="text-xs text-muted-foreground">{stat.label}</span>
             </div>
+            <div className="text-2xl font-bold text-foreground">{stat.value}</div>
           </div>
-        )}
+        ))}
+      </div>
 
-        {/* Approval pending warning */}
-        {Number(profile?.isApproved) === 0 && Number(profile?.isSuspended) === 0 && (
-          <div className="mb-6 p-4 bg-yellow-50 dark:bg-yellow-900/20 border border-yellow-200 dark:border-yellow-800 rounded-xl flex items-start gap-3">
-            <AlertTriangle size={20} className="text-yellow-600 dark:text-yellow-400 flex-shrink-0 mt-0.5" />
-            <div>
-              <p className="font-semibold text-yellow-800 dark:text-yellow-300">Profile Pending Approval</p>
-              <p className="text-sm text-yellow-700 dark:text-yellow-400">
-                Your profile is under review. You can browse jobs and submit proposals while you wait.
-              </p>
-            </div>
+      <div className="grid lg:grid-cols-2 gap-8">
+        {/* Active Contracts */}
+        <div>
+          <div className="flex items-center justify-between mb-4">
+            <h2 className="text-lg font-semibold text-foreground">Active Contracts</h2>
+            <Button variant="ghost" size="sm" onClick={() => navigate({ to: '/freelancer/contracts' })}>
+              View All <ArrowRight size={14} className="ml-1" />
+            </Button>
           </div>
-        )}
-
-        {/* Header */}
-        <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4 mb-8">
-          <div>
-            <h1 className="text-2xl font-bold text-foreground">
-              Welcome back, {firstName}!
-            </h1>
-            <p className="text-muted-foreground mt-1">
-              Manage your work and earnings
-            </p>
-          </div>
-          <button
-            onClick={() => navigate({ to: '/jobs' })}
-            className="inline-flex items-center gap-2 px-4 py-2.5 bg-primary text-primary-foreground rounded-xl text-sm font-medium hover:bg-primary/90 transition-colors self-start sm:self-auto"
-          >
-            <Search size={16} />
-            Find Jobs
-          </button>
-        </div>
-
-        {/* Stats grid */}
-        <div className="grid grid-cols-2 lg:grid-cols-4 gap-4 mb-8">
-          {stats.map((s) => (
-            <div
-              key={s.label}
-              onClick={() => s.href && navigate({ to: s.href as any })}
-              className={`bg-card border border-border rounded-2xl p-5 ${s.href ? 'cursor-pointer card-hover' : ''}`}
-            >
-              <div className={`w-10 h-10 rounded-xl flex items-center justify-center mb-3 ${s.color}`}>
-                <s.icon size={20} />
-              </div>
-              <p className="text-2xl font-bold text-foreground">{s.value}</p>
-              <p className="text-sm text-muted-foreground mt-0.5">{s.label}</p>
+          {loading ? (
+            <div className="space-y-3">{[...Array(3)].map((_, i) => <div key={i} className="h-20 bg-card border border-border rounded-xl animate-pulse" />)}</div>
+          ) : activeContracts.length === 0 ? (
+            <div className="bg-card border border-border rounded-xl p-8 text-center">
+              <Briefcase size={32} className="mx-auto text-muted-foreground mb-3" />
+              <p className="text-muted-foreground text-sm">No active contracts yet</p>
+              <Button size="sm" className="mt-3" onClick={() => navigate({ to: '/freelancer/jobs' })}>Browse Jobs</Button>
             </div>
-          ))}
-        </div>
-
-        {/* Main content grid */}
-        <div className="grid lg:grid-cols-3 gap-6">
-          {/* Active Contracts */}
-          <div className="lg:col-span-2 bg-card border border-border rounded-2xl overflow-hidden">
-            <div className="flex items-center justify-between px-5 py-4 border-b border-border">
-              <h2 className="font-semibold text-foreground">Active Contracts</h2>
-              <Link
-                to="/freelancer/contracts"
-                className="text-xs text-primary hover:underline flex items-center gap-0.5"
-              >
-                View all <ChevronRight size={12} />
-              </Link>
-            </div>
-
-            {contractsLoading ? (
-              <div className="divide-y divide-border">
-                {[...Array(3)].map((_, i) => (
-                  <div key={i} className="px-5 py-4 flex items-center gap-3 animate-pulse">
-                    <div className="flex-1 space-y-2">
-                      <div className="h-4 bg-muted rounded w-3/4" />
-                      <div className="h-3 bg-muted rounded w-1/2" />
-                    </div>
-                    <div className="h-6 bg-muted rounded-full w-20" />
-                  </div>
-                ))}
-              </div>
-            ) : activeContracts.length === 0 ? (
-              <div className="px-5 py-10 text-center">
-                <Briefcase size={36} className="text-muted-foreground mx-auto mb-3" />
-                <p className="text-sm font-medium text-foreground mb-1">No active contracts</p>
-                <p className="text-xs text-muted-foreground mb-4">
-                  Submit proposals on jobs to get started
-                </p>
-                <button
-                  onClick={() => navigate({ to: '/jobs' })}
-                  className="px-4 py-2 bg-primary text-primary-foreground rounded-lg text-sm font-medium hover:bg-primary/90 transition-colors"
-                >
-                  Browse Jobs
-                </button>
-              </div>
-            ) : (
-              <div className="divide-y divide-border">
-                {activeContracts.map((c) => (
-                  <div
-                    key={c.id}
-                    onClick={() =>
-                      navigate({
-                        to: '/freelancer/contracts/$contractId',
-                        params: { contractId: c.id },
-                      })
-                    }
-                    className="flex items-center gap-3 px-5 py-4 hover:bg-muted/40 cursor-pointer transition-colors"
-                  >
-                    <div className="flex-1 min-w-0">
-                      <p className="text-sm font-medium text-foreground truncate">{c.title}</p>
-                      <p className="text-xs text-muted-foreground mt-0.5">
-                        Due: {formatDate(c.deadline)}
-                      </p>
-                    </div>
-                    <div className="flex items-center gap-3 flex-shrink-0">
-                      <span className="text-sm font-semibold text-foreground">
-                        {formatCurrency(c.freelancerAmount)}
-                      </span>
-                      <StatusBadge status={c.status} />
-                    </div>
-                  </div>
-                ))}
-              </div>
-            )}
-          </div>
-
-          {/* Right column */}
-          <div className="space-y-4">
-            {/* Quick Actions */}
-            <div className="bg-card border border-border rounded-2xl p-5">
-              <h2 className="font-semibold text-foreground mb-4">Quick Actions</h2>
-              <div className="space-y-2">
-                <button
-                  onClick={() => navigate({ to: '/jobs' })}
-                  className="w-full flex items-center gap-3 p-3 rounded-xl border border-border hover:bg-muted/50 transition-colors text-left group"
-                >
-                  <Search size={18} className="text-primary" />
-                  <span className="text-sm font-medium text-foreground">Browse Jobs</span>
-                  <ChevronRight size={14} className="text-muted-foreground ml-auto opacity-0 group-hover:opacity-100 transition-opacity" />
-                </button>
-                <button
-                  onClick={() => navigate({ to: '/freelancer/profile' })}
-                  className="w-full flex items-center gap-3 p-3 rounded-xl border border-border hover:bg-muted/50 transition-colors text-left group"
-                >
-                  <User size={18} className="text-primary" />
-                  <span className="text-sm font-medium text-foreground">Edit Profile</span>
-                  <ChevronRight size={14} className="text-muted-foreground ml-auto opacity-0 group-hover:opacity-100 transition-opacity" />
-                </button>
-                <button
-                  onClick={() => navigate({ to: '/freelancer/wallet' })}
-                  className="w-full flex items-center gap-3 p-3 rounded-xl border border-border hover:bg-muted/50 transition-colors text-left group"
-                >
-                  <Wallet size={18} className="text-primary" />
-                  <span className="text-sm font-medium text-foreground">View Wallet</span>
-                  <ChevronRight size={14} className="text-muted-foreground ml-auto opacity-0 group-hover:opacity-100 transition-opacity" />
-                </button>
-              </div>
-            </div>
-
-            {/* Recent Proposals */}
-            <div className="bg-card border border-border rounded-2xl overflow-hidden">
-              <div className="px-5 py-4 border-b border-border">
-                <h2 className="font-semibold text-foreground">Recent Proposals</h2>
-              </div>
-              {proposalsLoading ? (
-                <div className="px-5 py-4 space-y-3 animate-pulse">
-                  {[...Array(3)].map((_, i) => (
-                    <div key={i} className="flex items-center justify-between">
-                      <div className="h-4 bg-muted rounded w-1/2" />
-                      <div className="h-5 bg-muted rounded-full w-16" />
-                    </div>
-                  ))}
-                </div>
-              ) : proposals.length === 0 ? (
-                <div className="px-5 py-6 text-center">
-                  <p className="text-sm text-muted-foreground">No proposals yet</p>
-                  <button
-                    onClick={() => navigate({ to: '/jobs' })}
-                    className="mt-3 text-xs text-primary hover:underline"
-                  >
-                    Browse jobs →
-                  </button>
-                </div>
-              ) : (
-                <div className="divide-y divide-border">
-                  {proposals.slice(0, 4).map((p) => (
-                    <div key={p.id} className="px-5 py-3">
-                      <div className="flex items-center justify-between gap-2">
-                        <div className="min-w-0">
-                          <p className="text-sm font-medium text-foreground">
-                            {formatCurrency(p.bidAmount)}
-                          </p>
-                          <p className="text-xs text-muted-foreground">
-                            {p.estimatedDays}d delivery
-                          </p>
-                        </div>
-                        <StatusBadge status={p.status} />
+          ) : (
+            <div className="space-y-3">
+              {activeContracts.slice(0, 4).map(contract => (
+                <Link key={contract.id} to="/freelancer/contracts/$contractId" params={{ contractId: contract.id }} className="block">
+                  <div className="bg-card border border-border rounded-xl p-4 card-hover">
+                    <div className="flex items-start justify-between gap-2">
+                      <div className="min-w-0">
+                        <h3 className="font-medium text-foreground truncate">{contract.title}</h3>
+                        <p className="text-sm text-muted-foreground">Client: {contract.clientName || 'Client'}</p>
+                      </div>
+                      <div className="text-right shrink-0">
+                        <span className={`px-2 py-0.5 rounded-full text-xs font-medium ${getStatusColor(contract.status)}`}>{contract.status}</span>
+                        <div className="text-sm font-semibold text-foreground mt-1">{formatCurrency(contract.freelancerAmount || 0)}</div>
                       </div>
                     </div>
-                  ))}
-                </div>
-              )}
+                    <div className="flex items-center gap-2 mt-2 text-xs text-muted-foreground">
+                      <Clock size={12} />
+                      <span>Due: {formatDate(contract.deadline)}</span>
+                    </div>
+                  </div>
+                </Link>
+              ))}
             </div>
+          )}
+        </div>
+
+        {/* Suggested Jobs */}
+        <div>
+          <div className="flex items-center justify-between mb-4">
+            <h2 className="text-lg font-semibold text-foreground">Jobs For You</h2>
+            <Button variant="ghost" size="sm" onClick={() => navigate({ to: '/freelancer/jobs' })}>
+              Browse All <ArrowRight size={14} className="ml-1" />
+            </Button>
           </div>
+          {loading ? (
+            <div className="space-y-3">{[...Array(3)].map((_, i) => <div key={i} className="h-20 bg-card border border-border rounded-xl animate-pulse" />)}</div>
+          ) : suggestedJobs.length === 0 ? (
+            <div className="bg-card border border-border rounded-xl p-8 text-center">
+              <p className="text-muted-foreground text-sm">No open jobs right now</p>
+            </div>
+          ) : (
+            <div className="space-y-3">
+              {suggestedJobs.map(job => {
+                const skills = safeParseJSON<string[]>(job.skillsRequired, [])
+                return (
+                  <Link key={job.id} to="/freelancer/jobs/$jobId" params={{ jobId: job.id }} className="block">
+                    <div className="bg-card border border-border rounded-xl p-4 card-hover">
+                      <div className="flex items-start justify-between gap-2 mb-2">
+                        <h3 className="font-medium text-foreground">{job.title}</h3>
+                        <span className="text-sm font-semibold text-foreground shrink-0">
+                          {job.budgetType === 'fixed' ? formatCurrency(job.budgetMax || 0) : `${formatCurrency(job.budgetMin || 0)}/hr`}
+                        </span>
+                      </div>
+                      <div className="flex flex-wrap gap-1 mb-2">
+                        {skills.slice(0, 3).map(s => <Badge key={s} variant="secondary" className="text-xs">{s}</Badge>)}
+                      </div>
+                      <span className="text-xs text-muted-foreground">{job.category}</span>
+                    </div>
+                  </Link>
+                )
+              })}
+            </div>
+          )}
+        </div>
+      </div>
+
+      {/* Quick Actions */}
+      <div className="mt-8 bg-card border border-border rounded-xl p-6">
+        <h2 className="text-lg font-semibold text-foreground mb-4">Quick Actions</h2>
+        <div className="flex flex-wrap gap-3">
+          <Button onClick={() => navigate({ to: '/freelancer/jobs' })}>
+            <Briefcase size={16} className="mr-2" /> Browse Jobs
+          </Button>
+          <Button variant="outline" onClick={() => navigate({ to: '/settings' })}>
+            Update Profile
+          </Button>
+          <Button variant="outline" onClick={() => navigate({ to: '/freelancer/wallet' })}>
+            <DollarSign size={16} className="mr-2" /> View Wallet
+          </Button>
         </div>
       </div>
     </div>

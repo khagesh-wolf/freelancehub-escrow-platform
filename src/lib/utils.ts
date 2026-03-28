@@ -1,86 +1,84 @@
-import { clsx, type ClassValue } from "clsx"
-import { twMerge } from "tailwind-merge"
+import { type ClassValue, clsx } from 'clsx'
+import { twMerge } from 'tailwind-merge'
 
 export function cn(...inputs: ClassValue[]) {
   return twMerge(clsx(inputs))
 }
 
-export function formatCurrency(amount: number, currency = 'USD') {
-  return new Intl.NumberFormat('en-US', { style: 'currency', currency }).format(amount)
+export function formatCurrency(amount: number): string {
+  return new Intl.NumberFormat('en-US', {
+    style: 'currency',
+    currency: 'USD',
+    minimumFractionDigits: 0,
+    maximumFractionDigits: 2,
+  }).format(amount)
 }
 
-export function formatDate(dateStr: string) {
-  if (!dateStr) return '—'
-  return new Date(dateStr).toLocaleDateString('en-US', { year: 'numeric', month: 'short', day: 'numeric' })
+export function formatDate(date: string): string {
+  if (!date) return 'N/A'
+  return new Intl.DateTimeFormat('en-US', {
+    year: 'numeric',
+    month: 'short',
+    day: 'numeric',
+  }).format(new Date(date))
 }
 
-export function timeAgo(dateStr: string) {
+export function formatRelativeTime(date: string): string {
+  if (!date) return ''
   const now = new Date()
-  const date = new Date(dateStr)
-  const diff = now.getTime() - date.getTime()
-  const mins = Math.floor(diff / 60000)
-  const hours = Math.floor(mins / 60)
-  const days = Math.floor(hours / 24)
-  if (days > 30) return formatDate(dateStr)
-  if (days > 0) return `${days}d ago`
-  if (hours > 0) return `${hours}h ago`
-  if (mins > 0) return `${mins}m ago`
-  return 'just now'
+  const d = new Date(date)
+  const diff = now.getTime() - d.getTime()
+  const minutes = Math.floor(diff / 60000)
+  const hours = Math.floor(diff / 3600000)
+  const days = Math.floor(diff / 86400000)
+  if (minutes < 1) return 'just now'
+  if (minutes < 60) return `${minutes}m ago`
+  if (hours < 24) return `${hours}h ago`
+  if (days < 7) return `${days}d ago`
+  return formatDate(date)
 }
 
-export function parseJsonArray(str: string): string[] {
-  try { return JSON.parse(str || '[]') } catch { return [] }
+export function safeParseJSON<T>(str: string, fallback: T): T {
+  try {
+    return JSON.parse(str) as T
+  } catch {
+    return fallback
+  }
 }
 
-export function truncate(str: string, len = 100) {
-  if (!str || str.length <= len) return str
-  return str.slice(0, len) + '…'
-}
-
-export function getInitials(name: string) {
-  if (!name) return 'U'
-  return name.split(' ').map(n => n[0]).join('').toUpperCase().slice(0, 2)
+export function getInitials(name: string): string {
+  return name
+    .split(' ')
+    .map(n => n[0])
+    .join('')
+    .toUpperCase()
+    .slice(0, 2)
 }
 
 export function getStatusColor(status: string): string {
-  const map: Record<string, string> = {
-    open: 'bg-green-100 text-green-800',
-    active: 'bg-blue-100 text-blue-800',
-    in_progress: 'bg-blue-100 text-blue-800',
-    pending: 'bg-amber-100 text-amber-800',
-    submitted: 'bg-amber-100 text-amber-800',
-    completed: 'bg-green-100 text-green-800',
-    released: 'bg-green-100 text-green-800',
-    paid_to_platform: 'bg-amber-100 text-amber-800',
-    unpaid: 'bg-gray-100 text-gray-800',
-    disputed: 'bg-red-100 text-red-800',
-    cancelled: 'bg-gray-100 text-gray-600',
-    rejected: 'bg-red-100 text-red-800',
-    withdrawn: 'bg-gray-100 text-gray-600',
-    available: 'bg-green-100 text-green-800',
-    busy: 'bg-amber-100 text-amber-800',
-    unavailable: 'bg-red-100 text-red-800',
+  const colors: Record<string, string> = {
+    open: 'bg-emerald-100 text-emerald-700',
+    active: 'bg-blue-100 text-blue-700',
+    pending: 'bg-amber-100 text-amber-700',
+    submitted: 'bg-purple-100 text-purple-700',
+    revision: 'bg-orange-100 text-orange-700',
+    completed: 'bg-green-100 text-green-700',
+    disputed: 'bg-red-100 text-red-700',
+    cancelled: 'bg-gray-100 text-gray-700',
+    accepted: 'bg-green-100 text-green-700',
+    rejected: 'bg-red-100 text-red-700',
+    withdrawn: 'bg-gray-100 text-gray-700',
+    in_progress: 'bg-blue-100 text-blue-700',
+    available: 'bg-green-100 text-green-700',
+    busy: 'bg-amber-100 text-amber-700',
+    unavailable: 'bg-red-100 text-red-700',
+    approved: 'bg-green-100 text-green-700',
+    under_review: 'bg-blue-100 text-blue-700',
+    open_dispute: 'bg-red-100 text-red-700',
+    paid_to_platform: 'bg-amber-100 text-amber-700',
+    released: 'bg-green-100 text-green-700',
+    refunded: 'bg-gray-100 text-gray-700',
+    unpaid: 'bg-gray-100 text-gray-600',
   }
-  return map[status] ?? 'bg-gray-100 text-gray-700'
-}
-
-export function generateId(): string {
-  return crypto.randomUUID()
-}
-
-export const PLATFORM_FEE_PERCENT = 10
-
-export const CATEGORIES = [
-  'Web Development', 'Mobile Development', 'UI/UX Design', 'Graphic Design',
-  'Content Writing', 'Digital Marketing', 'Video & Animation', 'Data Science',
-  'DevOps & Cloud', 'Cybersecurity', 'Blockchain', 'Game Development',
-  'SEO', 'Social Media', 'Translation', 'Virtual Assistant',
-]
-
-export const SKILLS = [
-  'React', 'Vue', 'Angular', 'Next.js', 'Node.js', 'Python', 'Django', 'Laravel',
-  'TypeScript', 'JavaScript', 'HTML/CSS', 'Tailwind CSS', 'Figma', 'Photoshop',
-  'Flutter', 'React Native', 'Swift', 'Kotlin', 'AWS', 'Docker', 'PostgreSQL',
-  'MongoDB', 'WordPress', 'Shopify', 'Content Writing', 'Copywriting', 'SEO',
-]
-
+  return colors[status] || 'bg-gray-100 text-gray-600'
+} 

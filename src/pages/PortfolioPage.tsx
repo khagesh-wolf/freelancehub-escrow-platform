@@ -1,116 +1,304 @@
-import { useState } from 'react'
+import { useState, useEffect } from 'react'
+import { useNavigate } from '@tanstack/react-router'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
-import { Grid, Plus, Edit2, Trash2, ExternalLink, X } from 'lucide-react'
+import {
+  Plus,
+  Pencil,
+  Trash2,
+  ExternalLink,
+  ImageOff,
+  Tag,
+  FolderOpen,
+} from 'lucide-react'
+import { toast } from 'sonner'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
-import { Label } from '@/components/ui/label'
 import { Textarea } from '@/components/ui/textarea'
-import { Badge } from '@/components/ui/badge'
-import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from '@/components/ui/dialog'
-import { blink, tables } from '../blink/client'
-import { useAuth } from '../hooks/useAuth'
-import { parseJsonArray } from '../lib/utils'
-import { EmptyState } from '../components/shared/EmptyState'
-import type { PortfolioItem } from '../types'
-import toast from 'react-hot-toast'
+import {
+  Dialog,
+  DialogContent,
+  DialogHeader,
+  DialogTitle,
+  DialogFooter,
+} from '@/components/ui/dialog'
+import { useAuth } from '@/hooks/useAuth'
+import { tables } from '@/blink/client'
+import { formatRelativeTime } from '@/lib/utils'
+import type { PortfolioItem } from '@/types'
 
-interface PortfolioForm {
+// ─── Form State ───────────────────────────────────────────────────────────────
+interface ItemForm {
   title: string
   description: string
   imageUrl: string
   projectUrl: string
-  tags: string
+  tagsInput: string // comma-separated
 }
 
-const EMPTY_FORM: PortfolioForm = { title: '', description: '', imageUrl: '', projectUrl: '', tags: '' }
+const emptyForm: ItemForm = {
+  title: '',
+  description: '',
+  imageUrl: '',
+  projectUrl: '',
+  tagsInput: '',
+}
 
-function PortfolioModal({
-  open,
-  item,
-  onClose,
-  userId,
-}: {
-  open: boolean
-  item: PortfolioItem | null
-  onClose: () => void
-  userId: string
-}) {
-  const qc = useQueryClient()
-  const [form, setForm] = useState<PortfolioForm>(
-    item
-      ? { title: item.title, description: item.description, imageUrl: item.imageUrl, projectUrl: item.projectUrl, tags: parseJsonArray(item.tags).join(', ') }
-      : EMPTY_FORM
+// ─── Portfolio Item Card ──────────────────────────────────────────────────────
+interface ItemCardProps {
+  item: PortfolioItem
+  onEdit: (item: PortfolioItem) => void
+  onDelete: (id: string) => void
+  isDeleting: boolean
+}
+
+function PortfolioCard({ item, onEdit, onDelete, isDeleting }: ItemCardProps) {
+  const tags = (() => { try { return JSON.parse(item.tags || '[]') as string[] } catch { return [] } })()
+
+  return (
+    <div className="bg-card border border-border rounded-2xl overflow-hidden card-hover group">
+      {/* Image */}
+      <div className="relative aspect-video bg-muted overflow-hidden">
+        {item.imageUrl ? (
+          <img
+            src={item.imageUrl}
+            alt={item.title}
+            className="w-full h-full object-cover transition-transform duration-300 group-hover:scale-105"
+            onError={e => { (e.target as HTMLImageElement).style.display = 'none' }}
+          />
+        ) : (
+          <div className="w-full h-full flex items-center justify-center">
+            <ImageOff size={32} className="text-muted-foreground opacity-30" />
+          </div>
+        )}
+
+        {/* Hover overlay actions */}
+        <div className="absolute inset-0 bg-black/60 opacity-0 group-hover:opacity-100 transition-opacity flex items-center justify-center gap-2">
+          {item.projectUrl && (
+            <a
+              href={item.projectUrl}
+              target="_blank"
+              rel="noopener noreferrer"
+              className="p-2 bg-white/20 backdrop-blur rounded-xl hover:bg-white/30 transition-colors"
+              title="View project"
+            >
+              <ExternalLink size={16} className="text-white" />
+            </a>
+          )}
+          <button
+            onClick={() => onEdit(item)}
+            className="p-2 bg-white/20 backdrop-blur rounded-xl hover:bg-white/30 transition-colors"
+            title="Edit"
+          >
+            <Pencil size={16} className="text-white" />
+          </button>
+          <button
+            onClick={() => onDelete(item.id)}
+            disabled={isDeleting}
+            className="p-2 bg-red-500/60 backdrop-blur rounded-xl hover:bg-red-500/80 transition-colors disabled:opacity-50"
+            title="Delete"
+          >
+            <Trash2 size={16} className="text-white" />
+          </button>
+        </div>
+      </div>
+
+      {/* Body */}
+      <div className="p-4">
+        <div className="flex items-start justify-between gap-2 mb-2">
+          <h3 className="font-semibold text-foreground text-sm line-clamp-1">{item.title}</h3>
+          {item.projectUrl && (
+            <a
+              href={item.projectUrl}
+              target="_blank"
+              rel="noopener noreferrer"
+              className="shrink-0 text-muted-foreground hover:text-primary transition-colors"
+            >
+              <ExternalLink size={14} />
+            </a>
+          )}
+        </div>
+
+        {item.description && (
+          <p className="text-xs text-muted-foreground line-clamp-2 mb-3">{item.description}</p>
+        )}
+
+        {tags.length > 0 && (
+          <div className="flex flex-wrap gap-1.5 mb-3">
+            {tags.map((tag: string) => (
+              <span
+                key={tag}
+                className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full bg-primary/10 text-primary text-[11px] font-medium"
+              >
+                <Tag size={9} />
+                {tag}
+              </span>
+            ))}
+          </div>
+        )}
+
+        <div className="flex items-center justify-between pt-2 border-t border-border/50">
+          <span className="text-[11px] text-muted-foreground">{formatRelativeTime(item.createdAt)}</span>
+          <div className="flex gap-1">
+            <button
+              onClick={() => onEdit(item)}
+              className="p-1.5 rounded-lg hover:bg-muted transition-colors text-muted-foreground hover:text-foreground"
+            >
+              <Pencil size={13} />
+            </button>
+            <button
+              onClick={() => onDelete(item.id)}
+              disabled={isDeleting}
+              className="p-1.5 rounded-lg hover:bg-red-50 dark:hover:bg-red-900/20 transition-colors text-muted-foreground hover:text-red-500 disabled:opacity-50"
+            >
+              <Trash2 size={13} />
+            </button>
+          </div>
+        </div>
+      </div>
+    </div>
   )
+}
 
-  const save = useMutation({
+// ─── Item Form Dialog ─────────────────────────────────────────────────────────
+interface ItemDialogProps {
+  open: boolean
+  onClose: () => void
+  initialData?: PortfolioItem | null
+  userId: string
+  onSuccess: () => void
+}
+
+function ItemDialog({ open, onClose, initialData, userId, onSuccess }: ItemDialogProps) {
+  const [form, setForm] = useState<ItemForm>(emptyForm)
+
+  useEffect(() => {
+    if (open) {
+      if (initialData) {
+        const tags = (() => { try { return JSON.parse(initialData.tags || '[]') as string[] } catch { return [] } })()
+        setForm({
+          title: initialData.title,
+          description: initialData.description,
+          imageUrl: initialData.imageUrl,
+          projectUrl: initialData.projectUrl,
+          tagsInput: tags.join(', '),
+        })
+      } else {
+        setForm(emptyForm)
+      }
+    }
+  }, [open, initialData])
+
+  const set = (field: keyof ItemForm) => (e: React.ChangeEvent<HTMLInputElement | HTMLTextAreaElement>) =>
+    setForm(prev => ({ ...prev, [field]: e.target.value }))
+
+  const mutation = useMutation({
     mutationFn: async () => {
       if (!form.title.trim()) throw new Error('Title is required')
-      const tags = form.tags.split(',').map(t => t.trim()).filter(Boolean)
+      const tags = form.tagsInput.split(',').map(t => t.trim()).filter(Boolean)
       const payload = {
         title: form.title.trim(),
         description: form.description.trim(),
         imageUrl: form.imageUrl.trim(),
         projectUrl: form.projectUrl.trim(),
         tags: JSON.stringify(tags),
-        updatedAt: new Date().toISOString(),
       }
-      if (item) {
-        await tables.portfolioItems.update(item.id, payload)
+      if (initialData) {
+        await tables.portfolioItems.update(initialData.id, payload)
       } else {
-        await tables.portfolioItems.create({
-          userId,
-          ...payload,
-          createdAt: new Date().toISOString(),
-        })
+        await tables.portfolioItems.create({ userId, ...payload })
       }
     },
     onSuccess: () => {
-      toast.success(item ? 'Portfolio item updated!' : 'Portfolio item added!')
-      qc.invalidateQueries({ queryKey: ['portfolio', userId] })
+      toast.success(initialData ? 'Portfolio item updated!' : 'Portfolio item added!')
+      onSuccess()
       onClose()
     },
-    onError: (e: Error) => toast.error(e.message),
+    onError: (err: Error) => toast.error(err.message || 'Failed to save item'),
   })
 
-  const f = (key: keyof PortfolioForm) => (e: React.ChangeEvent<HTMLInputElement | HTMLTextAreaElement>) =>
-    setForm(prev => ({ ...prev, [key]: e.target.value }))
-
   return (
-    <Dialog open={open} onOpenChange={onClose}>
-      <DialogContent>
+    <Dialog open={open} onOpenChange={v => !v && onClose()}>
+      <DialogContent className="sm:max-w-lg max-h-[90vh] overflow-y-auto">
         <DialogHeader>
-          <DialogTitle>{item ? 'Edit Portfolio Item' : 'Add Portfolio Item'}</DialogTitle>
+          <DialogTitle>{initialData ? 'Edit Portfolio Item' : 'Add Portfolio Item'}</DialogTitle>
         </DialogHeader>
+
         <div className="space-y-4 py-2">
-          <div className="space-y-1.5">
-            <Label>Title *</Label>
-            <Input placeholder="e.g. E-commerce Platform" value={form.title} onChange={f('title')} />
+          <div>
+            <label className="block text-sm font-medium text-foreground mb-1.5">Title *</label>
+            <Input value={form.title} onChange={set('title')} placeholder="e.g. E-commerce Dashboard" />
           </div>
-          <div className="space-y-1.5">
-            <Label>Description</Label>
-            <Textarea placeholder="Brief description of the project..." rows={3} value={form.description} onChange={f('description')} />
+
+          <div>
+            <label className="block text-sm font-medium text-foreground mb-1.5">Description</label>
+            <Textarea
+              value={form.description}
+              onChange={set('description')}
+              placeholder="Describe the project, your role, technologies used..."
+              rows={3}
+              className="resize-none"
+            />
           </div>
-          <div className="space-y-1.5">
-            <Label>Image URL</Label>
-            <Input placeholder="https://..." value={form.imageUrl} onChange={f('imageUrl')} />
+
+          <div>
+            <label className="block text-sm font-medium text-foreground mb-1.5">Image URL</label>
+            <Input
+              value={form.imageUrl}
+              onChange={set('imageUrl')}
+              placeholder="https://example.com/image.jpg"
+              type="url"
+            />
+            {form.imageUrl && (
+              <div className="mt-2 rounded-xl overflow-hidden border border-border aspect-video bg-muted">
+                <img
+                  src={form.imageUrl}
+                  alt="Preview"
+                  className="w-full h-full object-cover"
+                  onError={e => { (e.target as HTMLImageElement).style.opacity = '0' }}
+                />
+              </div>
+            )}
           </div>
-          <div className="space-y-1.5">
-            <Label>Project URL</Label>
-            <Input placeholder="https://..." value={form.projectUrl} onChange={f('projectUrl')} />
+
+          <div>
+            <label className="block text-sm font-medium text-foreground mb-1.5">Project URL</label>
+            <Input
+              value={form.projectUrl}
+              onChange={set('projectUrl')}
+              placeholder="https://github.com/..."
+              type="url"
+            />
           </div>
-          <div className="space-y-1.5">
-            <Label>Tags (comma-separated)</Label>
-            <Input placeholder="React, Node.js, PostgreSQL" value={form.tags} onChange={f('tags')} />
+
+          <div>
+            <label className="block text-sm font-medium text-foreground mb-1.5">
+              Tags <span className="text-muted-foreground font-normal">(comma-separated)</span>
+            </label>
+            <Input
+              value={form.tagsInput}
+              onChange={set('tagsInput')}
+              placeholder="React, TypeScript, Node.js"
+            />
+            {form.tagsInput && (
+              <div className="flex flex-wrap gap-1.5 mt-2">
+                {form.tagsInput.split(',').map(t => t.trim()).filter(Boolean).map(tag => (
+                  <span key={tag} className="px-2 py-0.5 rounded-full bg-primary/10 text-primary text-xs font-medium">
+                    {tag}
+                  </span>
+                ))}
+              </div>
+            )}
           </div>
         </div>
+
         <DialogFooter>
           <Button variant="outline" onClick={onClose}>Cancel</Button>
           <Button
-            className="gradient-amber border-0 text-white hover:opacity-90"
-            onClick={() => save.mutate()}
-            disabled={save.isPending}
+            onClick={() => mutation.mutate()}
+            disabled={mutation.isPending || !form.title.trim()}
+            className="gradient-amber text-white border-0"
           >
-            {save.isPending ? 'Saving...' : 'Save'}
+            {mutation.isPending ? 'Saving...' : initialData ? 'Save Changes' : 'Add Item'}
           </Button>
         </DialogFooter>
       </DialogContent>
@@ -118,135 +306,133 @@ function PortfolioModal({
   )
 }
 
+// ─── Main Page ────────────────────────────────────────────────────────────────
 export function PortfolioPage() {
-  const { user, profile, isAuthenticated } = useAuth()
+  const { user, profile, isLoading } = useAuth()
+  const navigate = useNavigate()
   const qc = useQueryClient()
-  const [modalOpen, setModalOpen] = useState(false)
-  const [editItem, setEditItem] = useState<PortfolioItem | null>(null)
 
-  const { data: items = [], isLoading } = useQuery({
+  const [dialogOpen, setDialogOpen] = useState(false)
+  const [editingItem, setEditingItem] = useState<PortfolioItem | null>(null)
+
+  useEffect(() => {
+    if (!isLoading && !user) navigate({ to: '/auth/login' })
+    if (!isLoading && profile && profile.role !== 'freelancer') navigate({ to: '/client/dashboard' })
+  }, [isLoading, user, profile])
+
+  const { data: items = [], isLoading: itemsLoading } = useQuery<PortfolioItem[]>({
     queryKey: ['portfolio', user?.id],
-    queryFn: () => tables.portfolioItems.list({ where: { userId: user!.id }, limit: 50, orderBy: { createdAt: 'desc' } }),
-    enabled: !!user?.id,
+    queryFn: () => tables.portfolioItems.list({ where: { userId: user!.id }, orderBy: { createdAt: 'desc' } }) as Promise<PortfolioItem[]>,
+    enabled: !!user,
   })
 
-  const deleteItem = useMutation({
+  const deleteMutation = useMutation({
     mutationFn: (id: string) => tables.portfolioItems.delete(id),
     onSuccess: () => {
-      toast.success('Item deleted')
+      toast.success('Portfolio item deleted')
       qc.invalidateQueries({ queryKey: ['portfolio', user?.id] })
     },
-    onError: (e: Error) => toast.error(e.message),
+    onError: () => toast.error('Failed to delete item'),
   })
 
-  if (!isAuthenticated || profile?.role !== 'freelancer') {
+  const handleEdit = (item: PortfolioItem) => {
+    setEditingItem(item)
+    setDialogOpen(true)
+  }
+
+  const handleAdd = () => {
+    setEditingItem(null)
+    setDialogOpen(true)
+  }
+
+  const handleClose = () => {
+    setDialogOpen(false)
+    setEditingItem(null)
+  }
+
+  if (isLoading) {
     return (
-      <div className="page-container pt-24 flex flex-col items-center justify-center py-24">
-        <Grid size={48} className="text-muted-foreground mb-4" />
-        <h2 className="text-xl font-semibold mb-2">Freelancer Access Only</h2>
-        <Button className="gradient-amber border-0 text-white" onClick={() => blink.auth.login()}>Sign In</Button>
+      <div className="flex items-center justify-center min-h-screen">
+        <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-primary" />
       </div>
     )
   }
 
-  const openAdd = () => { setEditItem(null); setModalOpen(true) }
-  const openEdit = (item: PortfolioItem) => { setEditItem(item); setModalOpen(true) }
-
   return (
-    <div className="page-container pt-24 animate-fade-in">
-      <div className="flex items-center justify-between mb-8">
+    <div className="page-container animate-fade-in">
+      {/* ── Header ─────────────────────────────────────────────────────── */}
+      <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 mb-8">
         <div>
-          <h1 className="text-2xl font-bold text-foreground">Portfolio</h1>
-          <p className="text-muted-foreground text-sm mt-1">Showcase your best work</p>
+          <h1 className="text-3xl font-bold text-foreground">My Portfolio</h1>
+          <p className="text-muted-foreground mt-1">Showcase your best work to attract clients</p>
         </div>
-        <Button className="gradient-amber border-0 text-white hover:opacity-90 gap-2" onClick={openAdd}>
-          <Plus size={16} /> Add Item
+        <Button onClick={handleAdd} className="gradient-amber text-white border-0 gap-2 shrink-0">
+          <Plus size={16} />
+          Add Portfolio Item
         </Button>
       </div>
 
-      <PortfolioModal
-        open={modalOpen}
-        item={editItem}
-        onClose={() => setModalOpen(false)}
-        userId={user!.id}
-      />
-
-      {isLoading ? (
+      {/* ── Grid ───────────────────────────────────────────────────────── */}
+      {itemsLoading ? (
         <div className="grid sm:grid-cols-2 lg:grid-cols-3 gap-5">
-          {[1, 2, 3].map(i => (
-            <div key={i} className="bg-card border border-border rounded-xl animate-pulse">
-              <div className="h-48 bg-muted rounded-t-xl" />
+          {Array.from({ length: 6 }).map((_, i) => (
+            <div key={i} className="bg-card border border-border rounded-2xl overflow-hidden animate-pulse">
+              <div className="aspect-video bg-muted" />
               <div className="p-4 space-y-2">
-                <div className="h-4 bg-muted rounded w-3/4" />
-                <div className="h-3 bg-muted rounded w-full" />
+                <div className="h-4 w-3/4 bg-muted rounded" />
+                <div className="h-3 w-full bg-muted rounded" />
+                <div className="h-3 w-2/3 bg-muted rounded" />
               </div>
             </div>
           ))}
         </div>
-      ) : (items as PortfolioItem[]).length === 0 ? (
-        <EmptyState
-          icon={Grid}
-          title="No portfolio items yet"
-          description="Add your first project to showcase your skills to potential clients."
-          action={{ label: 'Add Item', onClick: openAdd }}
-        />
+      ) : items.length === 0 ? (
+        <div className="flex flex-col items-center justify-center py-24 text-center">
+          <div className="w-20 h-20 rounded-2xl bg-muted flex items-center justify-center mb-5">
+            <FolderOpen size={36} className="text-muted-foreground opacity-40" />
+          </div>
+          <h3 className="text-lg font-semibold text-foreground mb-2">No portfolio items yet</h3>
+          <p className="text-sm text-muted-foreground mb-6 max-w-xs">
+            Showcase your best projects to stand out to potential clients
+          </p>
+          <Button onClick={handleAdd} className="gradient-amber text-white border-0 gap-2">
+            <Plus size={16} />
+            Add Your First Project
+          </Button>
+        </div>
       ) : (
         <div className="grid sm:grid-cols-2 lg:grid-cols-3 gap-5">
-          {(items as PortfolioItem[]).map(item => {
-            const tags = parseJsonArray(item.tags)
-            return (
-              <div key={item.id} className="bg-card border border-border rounded-xl overflow-hidden card-hover group">
-                {/* Image */}
-                <div className="h-48 bg-muted flex items-center justify-center overflow-hidden relative">
-                  {item.imageUrl ? (
-                    <img src={item.imageUrl} alt={item.title} className="w-full h-full object-cover" />
-                  ) : (
-                    <span className="text-6xl font-black text-muted-foreground/20">
-                      {item.title?.[0]?.toUpperCase()}
-                    </span>
-                  )}
-                  {/* Overlay actions */}
-                  <div className="absolute inset-0 bg-foreground/60 opacity-0 group-hover:opacity-100 transition-opacity flex items-center justify-center gap-3">
-                    <button
-                      onClick={() => openEdit(item)}
-                      className="w-9 h-9 rounded-full bg-white flex items-center justify-center hover:bg-secondary transition-colors"
-                    >
-                      <Edit2 size={15} />
-                    </button>
-                    <button
-                      onClick={() => deleteItem.mutate(item.id)}
-                      className="w-9 h-9 rounded-full bg-destructive flex items-center justify-center hover:opacity-90 transition-opacity"
-                    >
-                      <Trash2 size={15} className="text-white" />
-                    </button>
-                    {item.projectUrl && (
-                      <a
-                        href={item.projectUrl}
-                        target="_blank"
-                        rel="noreferrer"
-                        className="w-9 h-9 rounded-full bg-white flex items-center justify-center hover:bg-secondary transition-colors"
-                      >
-                        <ExternalLink size={15} />
-                      </a>
-                    )}
-                  </div>
-                </div>
-                {/* Content */}
-                <div className="p-4">
-                  <h3 className="font-semibold text-foreground mb-1">{item.title}</h3>
-                  {item.description && (
-                    <p className="text-xs text-muted-foreground mb-3 line-clamp-2">{item.description}</p>
-                  )}
-                  <div className="flex flex-wrap gap-1">
-                    {tags.map(t => (
-                      <Badge key={t} variant="secondary" className="text-xs">{t}</Badge>
-                    ))}
-                  </div>
-                </div>
-              </div>
-            )
-          })}
+          {items.map(item => (
+            <PortfolioCard
+              key={item.id}
+              item={item}
+              onEdit={handleEdit}
+              onDelete={id => deleteMutation.mutate(id)}
+              isDeleting={deleteMutation.isPending}
+            />
+          ))}
+          {/* Add more card */}
+          <button
+            onClick={handleAdd}
+            className="border-2 border-dashed border-border rounded-2xl aspect-auto min-h-[200px] flex flex-col items-center justify-center gap-3 hover:border-primary/50 hover:bg-muted/30 transition-colors group"
+          >
+            <div className="w-12 h-12 rounded-xl border-2 border-dashed border-border group-hover:border-primary/50 flex items-center justify-center transition-colors">
+              <Plus size={20} className="text-muted-foreground group-hover:text-primary transition-colors" />
+            </div>
+            <span className="text-sm text-muted-foreground group-hover:text-primary transition-colors font-medium">Add New Project</span>
+          </button>
         </div>
+      )}
+
+      {/* Form dialog */}
+      {user && (
+        <ItemDialog
+          open={dialogOpen}
+          onClose={handleClose}
+          initialData={editingItem}
+          userId={user.id}
+          onSuccess={() => qc.invalidateQueries({ queryKey: ['portfolio', user.id] })}
+        />
       )}
     </div>
   )

@@ -1,286 +1,458 @@
 import { useState, useMemo } from 'react'
+import { useNavigate, Link } from '@tanstack/react-router'
 import { useQuery } from '@tanstack/react-query'
-import { useNavigate } from '@tanstack/react-router'
-import { Search, MapPin, Star, Filter, X, ChevronLeft, ChevronRight } from 'lucide-react'
+import {
+  Search, Filter, Star, MapPin, Clock, DollarSign,
+  ChevronRight, Users, X, SlidersHorizontal,
+} from 'lucide-react'
 import { Button } from '@/components/ui/button'
-import { Input } from '@/components/ui/input'
-import { Badge } from '@/components/ui/badge'
 import { Avatar, AvatarFallback, AvatarImage } from '@/components/ui/avatar'
-import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select'
 import { tables } from '../blink/client'
-import { formatCurrency, getInitials, parseJsonArray, CATEGORIES } from '../lib/utils'
+import { JOB_CATEGORIES } from '../types'
+import { getInitials, formatCurrency, safeParseJSON } from '@/lib/utils'
 import type { FreelancerProfile, UserProfile } from '../types'
 
-const PAGE_SIZE = 20
+const PAGE_SIZE = 12
 
-function SkeletonCard() {
+// ─── Star Rating ─────────────────────────────────────────────────────────────
+function StarRating({ rating, totalReviews }: { rating: number; totalReviews: number }) {
   return (
-    <div className="bg-card border border-border rounded-xl p-5 animate-pulse">
-      <div className="flex items-start gap-3 mb-4">
-        <div className="w-12 h-12 rounded-full bg-muted" />
-        <div className="flex-1">
-          <div className="h-4 bg-muted rounded w-32 mb-2" />
-          <div className="h-3 bg-muted rounded w-24" />
-        </div>
+    <div className="flex items-center gap-1.5">
+      <div className="flex items-center gap-0.5">
+        {Array.from({ length: 5 }).map((_, i) => (
+          <Star
+            key={i}
+            size={12}
+            className={
+              i < Math.round(rating)
+                ? 'fill-amber-400 text-amber-400'
+                : 'fill-muted text-muted-foreground'
+            }
+          />
+        ))}
       </div>
-      <div className="flex gap-2 mb-3">
-        {[1, 2, 3].map(i => <div key={i} className="h-5 bg-muted rounded-full w-16" />)}
-      </div>
-      <div className="h-3 bg-muted rounded w-full mb-2" />
-      <div className="h-8 bg-muted rounded mt-4" />
+      <span className="text-xs text-muted-foreground">
+        {Number(rating).toFixed(1)} ({totalReviews})
+      </span>
     </div>
   )
 }
 
-function StarRating({ rating }: { rating: number }) {
+// ─── Skill Badge ──────────────────────────────────────────────────────────────
+function SkillBadge({ skill }: { skill: string }) {
   return (
-    <span className="flex items-center gap-1 text-sm">
-      <Star size={14} className="text-amber-400 fill-amber-400" />
-      <span className="font-medium text-foreground">{rating.toFixed(1)}</span>
+    <span className="px-2 py-0.5 rounded-full bg-secondary text-secondary-foreground text-xs">
+      {skill}
     </span>
   )
 }
 
-export function BrowseFreelancersPage() {
+// ─── Skeleton Card ────────────────────────────────────────────────────────────
+function FreelancerCardSkeleton() {
+  return (
+    <div className="bg-card border border-border rounded-xl p-5 animate-pulse">
+      <div className="flex items-start gap-4 mb-4">
+        <div className="w-14 h-14 rounded-full bg-muted shrink-0" />
+        <div className="flex-1 space-y-2">
+          <div className="h-4 bg-muted rounded w-3/4" />
+          <div className="h-3 bg-muted rounded w-1/2" />
+          <div className="h-3 bg-muted rounded w-1/3" />
+        </div>
+      </div>
+      <div className="flex gap-2 mb-4">
+        {[1, 2, 3].map(i => <div key={i} className="h-5 bg-muted rounded-full w-14" />)}
+      </div>
+      <div className="flex items-center justify-between">
+        <div className="h-4 bg-muted rounded w-20" />
+        <div className="h-8 bg-muted rounded w-24" />
+      </div>
+    </div>
+  )
+}
+
+// ─── Freelancer Card ──────────────────────────────────────────────────────────
+interface EnrichedFreelancer extends FreelancerProfile {
+  displayName: string
+  avatarUrl: string
+  location: string
+}
+
+function FreelancerCard({ freelancer }: { freelancer: EnrichedFreelancer }) {
   const navigate = useNavigate()
-  const [search, setSearch] = useState('')
-  const [category, setCategory] = useState('all')
-  const [minRating, setMinRating] = useState('any')
-  const [maxRate, setMaxRate] = useState('')
-  const [availability, setAvailability] = useState('all')
-  const [sortBy, setSortBy] = useState('rating')
-  const [page, setPage] = useState(1)
-  const [filtersOpen, setFiltersOpen] = useState(false)
+  const skills = safeParseJSON<string[]>(freelancer.skills, [])
+  const displaySkills = skills.slice(0, 4)
 
-  const { data: freelancers = [], isLoading: loadingFP } = useQuery({
-    queryKey: ['freelancerProfiles'],
-    queryFn: () => tables.freelancerProfiles.list({ limit: 200 }),
-  })
-
-  const { data: userProfiles = [], isLoading: loadingUP } = useQuery({
-    queryKey: ['userProfilesAll'],
-    queryFn: () => tables.userProfiles.list({ where: { role: 'freelancer' }, limit: 200 }),
-  })
-
-  const isLoading = loadingFP || loadingUP
-
-  const merged = useMemo(() => {
-    const upMap = new Map((userProfiles as UserProfile[]).map(u => [u.userId, u]))
-    return (freelancers as FreelancerProfile[]).map(fp => ({
-      ...fp,
-      userProfile: upMap.get(fp.userId),
-    })).filter(f => f.userProfile)
-  }, [freelancers, userProfiles])
-
-  const filtered = useMemo(() => {
-    let list = [...merged]
-    if (search.trim()) {
-      const q = search.toLowerCase()
-      list = list.filter(f =>
-        f.userProfile?.displayName?.toLowerCase().includes(q) ||
-        f.title?.toLowerCase().includes(q) ||
-        parseJsonArray(f.skills).some(s => s.toLowerCase().includes(q))
-      )
-    }
-    if (category !== 'all') {
-      list = list.filter(f => parseJsonArray(f.categories).includes(category))
-    }
-    if (minRating !== 'any') {
-      list = list.filter(f => f.rating >= Number(minRating))
-    }
-    if (maxRate) {
-      list = list.filter(f => f.hourlyRate <= Number(maxRate))
-    }
-    if (availability !== 'all') {
-      list = list.filter(f => f.availability === availability)
-    }
-    list.sort((a, b) => {
-      if (sortBy === 'rating') return b.rating - a.rating
-      if (sortBy === 'rate_asc') return a.hourlyRate - b.hourlyRate
-      if (sortBy === 'rate_desc') return b.hourlyRate - a.hourlyRate
-      if (sortBy === 'experience') return b.experienceYears - a.experienceYears
-      return 0
-    })
-    return list
-  }, [merged, search, category, minRating, maxRate, availability, sortBy])
-
-  const totalPages = Math.ceil(filtered.length / PAGE_SIZE)
-  const paginated = filtered.slice((page - 1) * PAGE_SIZE, page * PAGE_SIZE)
-
-  const clearFilters = () => {
-    setSearch(''); setCategory('all'); setMinRating('any')
-    setMaxRate(''); setAvailability('all'); setPage(1)
-  }
-
-  const hasFilters = search || category !== 'all' || minRating !== 'any' || maxRate || availability !== 'all'
+  const availabilityColor = {
+    available: 'bg-emerald-100 text-emerald-700',
+    busy: 'bg-amber-100 text-amber-700',
+    unavailable: 'bg-red-100 text-red-700',
+  }[freelancer.availability] || 'bg-muted text-muted-foreground'
 
   return (
-    <div className="page-container pt-24 animate-fade-in">
+    <article className="bg-card border border-border rounded-xl p-5 card-hover flex flex-col gap-4">
       {/* Header */}
-      <div className="mb-8">
-        <h1 className="text-3xl font-bold text-foreground mb-2">Browse Freelancers</h1>
-        <p className="text-muted-foreground">Find expert talent for your next project</p>
-      </div>
-
-      {/* Search + Sort bar */}
-      <div className="flex flex-col sm:flex-row gap-3 mb-6">
-        <div className="relative flex-1">
-          <Search size={16} className="absolute left-3 top-1/2 -translate-y-1/2 text-muted-foreground" />
-          <Input
-            placeholder="Search by name or skill..."
-            value={search}
-            onChange={e => { setSearch(e.target.value); setPage(1) }}
-            className="pl-9"
+      <div className="flex items-start gap-3">
+        <Avatar className="w-14 h-14 shrink-0">
+          <AvatarImage src={freelancer.avatarUrl} alt={freelancer.displayName} />
+          <AvatarFallback className="bg-primary text-primary-foreground font-semibold">
+            {getInitials(freelancer.displayName || 'F')}
+          </AvatarFallback>
+        </Avatar>
+        <div className="flex-1 min-w-0">
+          <div className="flex items-start justify-between gap-2">
+            <div className="min-w-0">
+              <h3 className="font-semibold text-foreground truncate">
+                {freelancer.displayName}
+              </h3>
+              <p className="text-sm text-muted-foreground truncate">{freelancer.title}</p>
+            </div>
+            {freelancer.isFeatured === '1' && (
+              <span className="shrink-0 px-2 py-0.5 rounded-full bg-accent/10 text-accent text-xs font-medium border border-accent/20">
+                Featured
+              </span>
+            )}
+          </div>
+          <StarRating
+            rating={Number(freelancer.rating) || 0}
+            totalReviews={Number(freelancer.totalReviews) || 0}
           />
         </div>
-        <Select value={sortBy} onValueChange={v => { if (v) { setSortBy(v); setPage(1) } }}>
-          <SelectTrigger className="w-48">
-            <SelectValue placeholder="Sort by" />
-          </SelectTrigger>
-          <SelectContent>
-            <SelectItem value="rating">Highest Rated</SelectItem>
-            <SelectItem value="rate_asc">Rate: Low to High</SelectItem>
-            <SelectItem value="rate_desc">Rate: High to Low</SelectItem>
-            <SelectItem value="experience">Most Experienced</SelectItem>
-          </SelectContent>
-        </Select>
-        <Button variant="outline" onClick={() => setFiltersOpen(!filtersOpen)} className="gap-2">
-          <Filter size={16} /> Filters
-          {hasFilters && <span className="w-2 h-2 rounded-full bg-accent" />}
+      </div>
+
+      {/* Meta */}
+      <div className="flex flex-wrap gap-3 text-xs text-muted-foreground">
+        <span className="flex items-center gap-1">
+          <DollarSign size={12} className="text-accent" />
+          {formatCurrency(Number(freelancer.hourlyRate) || 0)}/hr
+        </span>
+        {freelancer.location && (
+          <span className="flex items-center gap-1">
+            <MapPin size={12} />
+            {freelancer.location}
+          </span>
+        )}
+        <span className="flex items-center gap-1">
+          <Clock size={12} />
+          {freelancer.experienceYears}y exp
+        </span>
+        <span className={`flex items-center gap-1 px-2 py-0.5 rounded-full text-xs font-medium ${availabilityColor}`}>
+          {freelancer.availability}
+        </span>
+      </div>
+
+      {/* Skills */}
+      {displaySkills.length > 0 && (
+        <div className="flex flex-wrap gap-1.5">
+          {displaySkills.map(skill => <SkillBadge key={skill} skill={skill} />)}
+          {skills.length > 4 && (
+            <span className="px-2 py-0.5 rounded-full bg-muted text-muted-foreground text-xs">
+              +{skills.length - 4}
+            </span>
+          )}
+        </div>
+      )}
+
+      {/* Footer */}
+      <div className="flex items-center justify-between pt-1 border-t border-border mt-auto">
+        <span className="text-xs text-muted-foreground">
+          {Number(freelancer.completedJobs) || 0} jobs completed
+        </span>
+        <Button
+          size="sm"
+          onClick={() => navigate({ to: '/freelancer/$userId', params: { userId: freelancer.userId } as any })}
+
+          className="gradient-amber border-0 text-white hover:opacity-90 text-xs h-8"
+        >
+          View Profile <ChevronRight size={13} />
         </Button>
-        {hasFilters && (
-          <Button variant="ghost" size="sm" onClick={clearFilters} className="text-muted-foreground gap-1">
+      </div>
+    </article>
+  )
+}
+
+// ─── Filter Bar ───────────────────────────────────────────────────────────────
+interface Filters {
+  search: string
+  category: string
+  availability: string
+  minRate: string
+  maxRate: string
+  minRating: string
+}
+
+function FilterBar({
+  filters,
+  onChange,
+  onReset,
+}: {
+  filters: Filters
+  onChange: (key: keyof Filters, value: string) => void
+  onReset: () => void
+}) {
+  const hasActive = Object.values(filters).some(v => v !== '')
+
+  return (
+    <div className="bg-card border border-border rounded-xl p-4 mb-6 space-y-4">
+      {/* Search row */}
+      <div className="flex gap-3">
+        <div className="relative flex-1">
+          <Search size={16} className="absolute left-3 top-1/2 -translate-y-1/2 text-muted-foreground" />
+          <input
+            type="text"
+            placeholder="Search by name or skill..."
+            value={filters.search}
+            onChange={e => onChange('search', e.target.value)}
+            className="w-full pl-9 pr-4 py-2 bg-background border border-input rounded-lg text-sm text-foreground placeholder:text-muted-foreground focus:outline-none focus:ring-2 focus:ring-ring"
+          />
+          {filters.search && (
+            <button
+              onClick={() => onChange('search', '')}
+              className="absolute right-3 top-1/2 -translate-y-1/2 text-muted-foreground hover:text-foreground"
+            >
+              <X size={14} />
+            </button>
+          )}
+        </div>
+        {hasActive && (
+          <Button variant="outline" size="sm" onClick={onReset} className="shrink-0">
             <X size={14} /> Clear
           </Button>
         )}
       </div>
 
-      {/* Filter panel */}
-      {filtersOpen && (
-        <div className="bg-card border border-border rounded-xl p-5 mb-6 grid sm:grid-cols-2 lg:grid-cols-4 gap-4">
-          <div>
-            <label className="text-xs font-medium text-muted-foreground mb-1.5 block">Category</label>
-            <Select value={category} onValueChange={v => { if (v) { setCategory(v); setPage(1) } }}>
-              <SelectTrigger><SelectValue /></SelectTrigger>
-              <SelectContent>
-                <SelectItem value="all">All Categories</SelectItem>
-                {CATEGORIES.map(c => <SelectItem key={c} value={c}>{c}</SelectItem>)}
-              </SelectContent>
-            </Select>
-          </div>
-          <div>
-            <label className="text-xs font-medium text-muted-foreground mb-1.5 block">Min Rating</label>
-            <Select value={minRating} onValueChange={v => { if (v) { setMinRating(v); setPage(1) } }}>
-              <SelectTrigger><SelectValue /></SelectTrigger>
-              <SelectContent>
-                <SelectItem value="any">Any Rating</SelectItem>
-                <SelectItem value="4">4+ Stars</SelectItem>
-                <SelectItem value="4.5">4.5+ Stars</SelectItem>
-                <SelectItem value="5">5 Stars Only</SelectItem>
-              </SelectContent>
-            </Select>
-          </div>
-          <div>
-            <label className="text-xs font-medium text-muted-foreground mb-1.5 block">Max Hourly Rate</label>
-            <Input
-              type="number"
-              placeholder="e.g. 100"
-              value={maxRate}
-              onChange={e => { setMaxRate(e.target.value); setPage(1) }}
-            />
-          </div>
-          <div>
-            <label className="text-xs font-medium text-muted-foreground mb-1.5 block">Availability</label>
-            <Select value={availability} onValueChange={v => { if (v) { setAvailability(v); setPage(1) } }}>
-              <SelectTrigger><SelectValue /></SelectTrigger>
-              <SelectContent>
-                <SelectItem value="all">Any</SelectItem>
-                <SelectItem value="available">Available</SelectItem>
-                <SelectItem value="busy">Busy</SelectItem>
-              </SelectContent>
-            </Select>
-          </div>
+      {/* Filter controls */}
+      <div className="flex flex-wrap gap-3">
+        <div className="flex items-center gap-2">
+          <SlidersHorizontal size={14} className="text-muted-foreground" />
+          <span className="text-xs text-muted-foreground font-medium">Filters:</span>
         </div>
-      )}
 
-      {/* Results count */}
-      <p className="text-sm text-muted-foreground mb-5">
-        {isLoading ? 'Loading...' : `${filtered.length} freelancers found`}
+        {/* Category */}
+        <select
+          value={filters.category}
+          onChange={e => onChange('category', e.target.value)}
+          className="text-xs bg-background border border-input rounded-lg px-3 py-1.5 text-foreground focus:outline-none focus:ring-2 focus:ring-ring"
+        >
+          <option value="">All Categories</option>
+          {JOB_CATEGORIES.map(c => <option key={c} value={c}>{c}</option>)}
+        </select>
+
+        {/* Availability */}
+        <select
+          value={filters.availability}
+          onChange={e => onChange('availability', e.target.value)}
+          className="text-xs bg-background border border-input rounded-lg px-3 py-1.5 text-foreground focus:outline-none focus:ring-2 focus:ring-ring"
+        >
+          <option value="">Any Availability</option>
+          <option value="available">Available</option>
+          <option value="busy">Busy</option>
+          <option value="unavailable">Unavailable</option>
+        </select>
+
+        {/* Rate range */}
+        <div className="flex items-center gap-1.5">
+          <span className="text-xs text-muted-foreground">Rate:</span>
+          <input
+            type="number"
+            placeholder="Min"
+            value={filters.minRate}
+            onChange={e => onChange('minRate', e.target.value)}
+            className="w-16 text-xs bg-background border border-input rounded-lg px-2 py-1.5 text-foreground focus:outline-none focus:ring-2 focus:ring-ring"
+          />
+          <span className="text-xs text-muted-foreground">–</span>
+          <input
+            type="number"
+            placeholder="Max"
+            value={filters.maxRate}
+            onChange={e => onChange('maxRate', e.target.value)}
+            className="w-16 text-xs bg-background border border-input rounded-lg px-2 py-1.5 text-foreground focus:outline-none focus:ring-2 focus:ring-ring"
+          />
+          <span className="text-xs text-muted-foreground">/hr</span>
+        </div>
+
+        {/* Min rating */}
+        <select
+          value={filters.minRating}
+          onChange={e => onChange('minRating', e.target.value)}
+          className="text-xs bg-background border border-input rounded-lg px-3 py-1.5 text-foreground focus:outline-none focus:ring-2 focus:ring-ring"
+        >
+          <option value="">Any Rating</option>
+          <option value="4">4★ & above</option>
+          <option value="4.5">4.5★ & above</option>
+          <option value="5">5★ only</option>
+        </select>
+      </div>
+    </div>
+  )
+}
+
+// ─── Empty State ──────────────────────────────────────────────────────────────
+function EmptyState() {
+  return (
+    <div className="text-center py-24">
+      <div className="w-16 h-16 rounded-2xl bg-muted flex items-center justify-center mx-auto mb-4">
+        <Users size={28} className="text-muted-foreground" />
+      </div>
+      <h3 className="text-lg font-semibold text-foreground mb-2">No freelancers found</h3>
+      <p className="text-muted-foreground text-sm max-w-xs mx-auto">
+        Try adjusting your filters or search terms to find available talent.
       </p>
+    </div>
+  )
+}
+
+// ─── Main Page ────────────────────────────────────────────────────────────────
+export function BrowseFreelancersPage() {
+  const [page, setPage] = useState(1)
+  const [filters, setFilters] = useState<Filters>({
+    search: '',
+    category: '',
+    availability: '',
+    minRate: '',
+    maxRate: '',
+    minRating: '',
+  })
+
+  const handleFilterChange = (key: keyof Filters, value: string) => {
+    setFilters(prev => ({ ...prev, [key]: value }))
+    setPage(1)
+  }
+
+  const resetFilters = () => {
+    setFilters({ search: '', category: '', availability: '', minRate: '', maxRate: '', minRating: '' })
+    setPage(1)
+  }
+
+  // Fetch freelancer profiles
+  const { data: rawFreelancers = [], isLoading: loadingFreelancers } = useQuery({
+    queryKey: ['freelancerProfiles'],
+    queryFn: () => tables.freelancerProfiles.list({ limit: 200 }),
+  })
+
+  // Fetch all user profiles needed
+  const userIds = useMemo(
+    () => [...new Set((rawFreelancers as FreelancerProfile[]).map(f => f.userId))],
+    [rawFreelancers]
+  )
+
+  const { data: rawUserProfiles = [], isLoading: loadingProfiles } = useQuery({
+    queryKey: ['userProfilesBatch', userIds],
+    queryFn: async () => {
+      if (userIds.length === 0) return []
+      return tables.userProfiles.list({ limit: 500 })
+    },
+    enabled: userIds.length > 0,
+  })
+
+  const isLoading = loadingFreelancers || (userIds.length > 0 && loadingProfiles)
+
+  // Build enriched list
+  const enriched = useMemo<EnrichedFreelancer[]>(() => {
+    const profileMap = new Map<string, UserProfile>()
+    ;(rawUserProfiles as UserProfile[]).forEach(p => profileMap.set(p.userId, p))
+
+    return (rawFreelancers as FreelancerProfile[]).map(f => {
+      const up = profileMap.get(f.userId)
+      return {
+        ...f,
+        displayName: up?.displayName || 'Freelancer',
+        avatarUrl: up?.avatarUrl || '',
+        location: up?.location || '',
+      }
+    })
+  }, [rawFreelancers, rawUserProfiles])
+
+  // Client-side filtering
+  const filtered = useMemo(() => {
+    return enriched.filter(f => {
+      const skills = safeParseJSON<string[]>(f.skills, [])
+      const categories = safeParseJSON<string[]>(f.categories, [])
+
+      if (filters.search) {
+        const q = filters.search.toLowerCase()
+        const matchName = f.displayName.toLowerCase().includes(q)
+        const matchTitle = f.title?.toLowerCase().includes(q)
+        const matchSkill = skills.some(s => s.toLowerCase().includes(q))
+        if (!matchName && !matchTitle && !matchSkill) return false
+      }
+      if (filters.category && !categories.includes(filters.category)) return false
+      if (filters.availability && f.availability !== filters.availability) return false
+      if (filters.minRate && Number(f.hourlyRate) < Number(filters.minRate)) return false
+      if (filters.maxRate && Number(f.hourlyRate) > Number(filters.maxRate)) return false
+      if (filters.minRating && Number(f.rating) < Number(filters.minRating)) return false
+      return true
+    })
+  }, [enriched, filters])
+
+  // Sort: featured first, then by rating desc
+  const sorted = useMemo(() => {
+    return [...filtered].sort((a, b) => {
+      if (a.isFeatured === '1' && b.isFeatured !== '1') return -1
+      if (b.isFeatured === '1' && a.isFeatured !== '1') return 1
+      return Number(b.rating) - Number(a.rating)
+    })
+  }, [filtered])
+
+  const totalPages = Math.ceil(sorted.length / PAGE_SIZE)
+  const paginated = sorted.slice(0, page * PAGE_SIZE)
+  const hasMore = page < totalPages
+
+  return (
+    <div className="page-container animate-fade-in">
+      {/* Header */}
+      <div className="mb-8">
+        <div className="flex items-center gap-2 text-sm text-muted-foreground mb-3">
+          <Link to="/" className="hover:text-foreground transition-colors">Home</Link>
+          <ChevronRight size={14} />
+          <span className="text-foreground">Browse Freelancers</span>
+        </div>
+        <div className="flex flex-col sm:flex-row sm:items-end justify-between gap-4">
+          <div>
+            <h1 className="text-3xl font-bold text-foreground">Browse Freelancers</h1>
+            <p className="text-muted-foreground mt-1">
+              Find top talent for your project from our vetted pool of professionals
+            </p>
+          </div>
+          {!isLoading && (
+            <span className="text-sm text-muted-foreground shrink-0">
+              {sorted.length} freelancer{sorted.length !== 1 ? 's' : ''} found
+            </span>
+          )}
+        </div>
+      </div>
+
+      {/* Filters */}
+      <FilterBar filters={filters} onChange={handleFilterChange} onReset={resetFilters} />
 
       {/* Grid */}
       {isLoading ? (
-        <div className="grid sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-5">
-          {Array.from({ length: 8 }).map((_, i) => <SkeletonCard key={i} />)}
+        <div className="grid sm:grid-cols-2 lg:grid-cols-3 gap-5">
+          {Array.from({ length: 6 }).map((_, i) => <FreelancerCardSkeleton key={i} />)}
         </div>
       ) : paginated.length === 0 ? (
-        <div className="text-center py-16">
-          <Search size={48} className="text-muted-foreground mx-auto mb-4" />
-          <h3 className="text-lg font-semibold mb-2">No freelancers found</h3>
-          <p className="text-muted-foreground text-sm">Try adjusting your filters</p>
-        </div>
+        <EmptyState />
       ) : (
-        <div className="grid sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-5">
-          {paginated.map(f => {
-            const up = f.userProfile!
-            const skills = parseJsonArray(f.skills).slice(0, 3)
-            return (
-              <div key={f.id} className="bg-card border border-border rounded-xl p-5 card-hover flex flex-col">
-                <div className="flex items-start gap-3 mb-3">
-                  <Avatar className="w-12 h-12 shrink-0">
-                    <AvatarImage src={up.avatarUrl} />
-                    <AvatarFallback className="gradient-hero text-white text-sm font-semibold">
-                      {getInitials(up.displayName || 'U')}
-                    </AvatarFallback>
-                  </Avatar>
-                  <div className="flex-1 min-w-0">
-                    <p className="font-semibold text-foreground truncate">{up.displayName}</p>
-                    <p className="text-xs text-muted-foreground truncate">{f.title}</p>
-                  </div>
-                </div>
-                <div className="flex flex-wrap gap-1.5 mb-3">
-                  {skills.map(s => (
-                    <Badge key={s} variant="secondary" className="text-xs">{s}</Badge>
-                  ))}
-                </div>
-                <div className="flex items-center justify-between text-sm mt-auto pt-3 border-t border-border">
-                  <StarRating rating={f.rating || 0} />
-                  <span className="text-xs text-muted-foreground">{f.totalReviews || 0} reviews</span>
-                </div>
-                <div className="flex items-center justify-between mt-2">
-                  <span className="text-sm font-semibold text-foreground">
-                    {formatCurrency(f.hourlyRate || 0)}/hr
-                  </span>
-                  {up.location && (
-                    <span className="flex items-center gap-1 text-xs text-muted-foreground">
-                      <MapPin size={11} />{up.location}
-                    </span>
-                  )}
-                </div>
-                <Button
-                  className="w-full mt-3 gradient-amber border-0 text-white hover:opacity-90"
-                  size="sm"
-                  onClick={() => navigate({ to: '/freelancer/$userId', params: { userId: f.userId } })}
-                >
-                  View Profile
-                </Button>
-              </div>
-            )
-          })}
-        </div>
-      )}
+        <>
+          <div className="grid sm:grid-cols-2 lg:grid-cols-3 gap-5">
+            {paginated.map(f => <FreelancerCard key={f.id} freelancer={f} />)}
+          </div>
 
-      {/* Pagination */}
-      {totalPages > 1 && (
-        <div className="flex items-center justify-center gap-3 mt-10">
-          <Button variant="outline" size="sm" onClick={() => setPage(p => Math.max(1, p - 1))} disabled={page === 1}>
-            <ChevronLeft size={16} />
-          </Button>
-          <span className="text-sm text-muted-foreground">Page {page} of {totalPages}</span>
-          <Button variant="outline" size="sm" onClick={() => setPage(p => Math.min(totalPages, p + 1))} disabled={page === totalPages}>
-            <ChevronRight size={16} />
-          </Button>
-        </div>
+          {/* Load More */}
+          {hasMore && (
+            <div className="text-center mt-10">
+              <Button
+                variant="outline"
+                onClick={() => setPage(p => p + 1)}
+                className="min-w-[160px]"
+              >
+                Load More
+                <span className="ml-2 text-xs text-muted-foreground">
+                  ({paginated.length}/{sorted.length})
+                </span>
+              </Button>
+            </div>
+          )}
+        </>
       )}
     </div>
   )

@@ -6,8 +6,6 @@ export const blink = createClient({
   auth: { mode: 'managed' },
 })
 
-// Type-safe table accessors — the SDK uses a Proxy that converts camelCase to snake_case table names
-// but TypeScript types only expose `.table()`. These helpers provide the correct typed access.
 const db = blink.db as any
 
 export const tables = {

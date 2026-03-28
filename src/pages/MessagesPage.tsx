@@ -1,289 +1,373 @@
 import { useState, useEffect, useRef } from 'react'
-import { useParams } from '@tanstack/react-router'
+import { useNavigate, useParams } from '@tanstack/react-router'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
-import { MessageSquare, Send } from 'lucide-react'
+import { Send, MessageSquare, Search, Clock, CheckCheck } from 'lucide-react'
+import { toast } from 'sonner'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
-import { Avatar, AvatarFallback, AvatarImage } from '@/components/ui/avatar'
-import { blink, tables } from '../blink/client'
-import { useAuth } from '../hooks/useAuth'
-import { getInitials, timeAgo } from '../lib/utils'
-import { EmptyState } from '../components/shared/EmptyState'
-import type { Message, UserProfile, Contract } from '../types'
-import toast from 'react-hot-toast'
+import { Textarea } from '@/components/ui/textarea'
+import { useAuth } from '@/hooks/useAuth'
+import { tables } from '@/blink/client'
+import { formatRelativeTime, getInitials } from '@/lib/utils'
+import type { Message } from '@/types'
 
+// ─── Conversation thread type ─────────────────────────────────────────────────
 interface Conversation {
   contractId: string
   contractTitle: string
-  otherUserId: string
-  otherUserName: string
-  otherUserAvatar: string
   lastMessage: string
-  lastAt: string
-  unread: number
+  lastMessageAt: string
+  unreadCount: number
+  otherPartyName: string
+}
+
+// ─── Skeleton ──────────────────────────────────────────────────────────────────
+function MsgSkeleton() {
+  return (
+    <div className="animate-pulse flex gap-3 mb-4">
+      <div className="w-8 h-8 rounded-full bg-muted shrink-0" />
+      <div className="space-y-1.5 flex-1">
+        <div className="h-3 w-24 bg-muted rounded" />
+        <div className="h-10 w-2/3 bg-muted rounded-2xl" />
+      </div>
+    </div>
+  )
+}
+
+function ConvSkeleton() {
+  return (
+    <div className="animate-pulse p-4 flex gap-3">
+      <div className="w-10 h-10 rounded-full bg-muted shrink-0" />
+      <div className="flex-1 space-y-1.5">
+        <div className="h-3 w-28 bg-muted rounded" />
+        <div className="h-3 w-full bg-muted rounded" />
+      </div>
+    </div>
+  )
 }
 
 export function MessagesPage() {
+  const { user, profile, isLoading } = useAuth()
+  const navigate = useNavigate()
   const params = useParams({ strict: false }) as { contractId?: string }
-  const { user, isAuthenticated } = useAuth()
   const qc = useQueryClient()
-  const [activeContractId, setActiveContractId] = useState(params.contractId || '')
-  const [msgText, setMsgText] = useState('')
-  const msgEndRef = useRef<HTMLDivElement>(null)
 
-  const { data: sentMsgs = [] } = useQuery({
-    queryKey: ['sentMessages', user?.id],
-    queryFn: () => tables.messages.list({ where: { userId: user!.id }, limit: 500, orderBy: { createdAt: 'desc' } }),
-    enabled: !!user?.id,
+  const [selectedContractId, setSelectedContractId] = useState<string | null>(
+    params.contractId ?? null,
+  )
+  const [messageText, setMessageText] = useState('')
+  const [searchQuery, setSearchQuery] = useState('')
+  const messagesEndRef = useRef<HTMLDivElement>(null)
+
+  // Auth guard
+  useEffect(() => {
+    if (!isLoading && !user) navigate({ to: '/auth/login' })
+  }, [isLoading, user])
+
+  // Fetch all messages for this user (sent or received)
+  const { data: allMessages = [], isLoading: msgsLoading } = useQuery<Message[]>({
+    queryKey: ['all-messages', user?.id],
+    queryFn: async () => {
+      const [sent, received] = await Promise.all([
+        tables.messages.list({ where: { userId: user!.id }, orderBy: { createdAt: 'asc' } }),
+        tables.messages.list({ where: { recipientId: user!.id }, orderBy: { createdAt: 'asc' } }),
+      ])
+      const combined = [...(sent as Message[]), ...(received as Message[])]
+      const seen = new Set<string>()
+      return combined
+        .filter(m => { if (seen.has(m.id)) return false; seen.add(m.id); return true })
+        .sort((a, b) => new Date(a.createdAt).getTime() - new Date(b.createdAt).getTime())
+    },
+    enabled: !!user,
     refetchInterval: 5000,
   })
 
-  const { data: recvMsgs = [] } = useQuery({
-    queryKey: ['recvMessages', user?.id],
-    queryFn: () => tables.messages.list({ where: { recipientId: user!.id }, limit: 500, orderBy: { createdAt: 'desc' } }),
-    enabled: !!user?.id,
-    refetchInterval: 5000,
-  })
+  // Derive conversations from messages
+  const conversations: Conversation[] = (() => {
+    const map = new Map<string, Conversation>()
+    for (const msg of allMessages) {
+      const cId = msg.contractId || `direct-${[msg.userId, msg.recipientId].sort().join('-')}`
+      const isMine = msg.userId === user?.id
+      const otherPartyName = isMine
+        ? (msg.senderName ?? 'Other Party')
+        : (msg.senderName ?? 'Other Party')
 
-  const allMsgs = [...(sentMsgs as Message[]), ...(recvMsgs as Message[])]
-  const contractIds = [...new Set(allMsgs.map(m => m.contractId).filter(Boolean))]
-
-  const { data: contracts = [] } = useQuery({
-    queryKey: ['msgContracts', contractIds.join(',')],
-    queryFn: async () => {
-      if (!contractIds.length) return []
-      const all = await Promise.all(contractIds.map(id => tables.contracts.list({ where: { id }, limit: 1 })))
-      return all.flat()
-    },
-    enabled: contractIds.length > 0,
-  })
-
-  const otherUserIds = [...new Set(allMsgs.map(m => m.userId === user?.id ? m.recipientId : m.userId))]
-  const { data: userProfiles = [] } = useQuery({
-    queryKey: ['msgUsers', otherUserIds.join(',')],
-    queryFn: async () => {
-      if (!otherUserIds.length) return []
-      const all = await Promise.all(otherUserIds.map(id => tables.userProfiles.list({ where: { userId: id }, limit: 1 })))
-      return all.flat()
-    },
-    enabled: otherUserIds.length > 0,
-  })
-
-  const contractMap = new Map((contracts as Contract[]).map(c => [c.id, c]))
-  const profileMap = new Map((userProfiles as UserProfile[]).map(u => [u.userId, u]))
-
-  // Build conversations
-  const convMap = new Map<string, Conversation>()
-  for (const msg of allMsgs) {
-    if (!msg.contractId) continue
-    const contract = contractMap.get(msg.contractId)
-    const otherUid = msg.userId === user?.id ? msg.recipientId : msg.userId
-    const otherUser = profileMap.get(otherUid)
-    const existing = convMap.get(msg.contractId)
-    const isUnread = msg.recipientId === user?.id && msg.isRead === '0'
-    if (!existing || new Date(msg.createdAt) > new Date(existing.lastAt)) {
-      convMap.set(msg.contractId, {
-        contractId: msg.contractId,
-        contractTitle: contract?.title || 'Contract',
-        otherUserId: otherUid,
-        otherUserName: otherUser?.displayName || 'User',
-        otherUserAvatar: otherUser?.avatarUrl || '',
-        lastMessage: msg.content,
-        lastAt: msg.createdAt,
-        unread: (existing?.unread || 0) + (isUnread ? 1 : 0),
-      })
+      if (!map.has(cId)) {
+        map.set(cId, {
+          contractId: cId,
+          contractTitle: msg.contractId ? `Contract #${msg.contractId.slice(-6)}` : 'Direct Message',
+          lastMessage: msg.content,
+          lastMessageAt: msg.createdAt,
+          unreadCount: 0,
+          otherPartyName,
+        })
+      }
+      const conv = map.get(cId)!
+      if (new Date(msg.createdAt) > new Date(conv.lastMessageAt)) {
+        conv.lastMessage = msg.content
+        conv.lastMessageAt = msg.createdAt
+      }
+      if (!isMine && msg.isRead === '0') conv.unreadCount++
     }
-  }
-  const conversations = [...convMap.values()].sort((a, b) => new Date(b.lastAt).getTime() - new Date(a.lastAt).getTime())
+    return Array.from(map.values()).sort(
+      (a, b) => new Date(b.lastMessageAt).getTime() - new Date(a.lastMessageAt).getTime(),
+    )
+  })()
 
-  // Active thread messages
-  const threadMsgs = allMsgs
-    .filter(m => m.contractId === activeContractId)
-    .sort((a, b) => new Date(a.createdAt).getTime() - new Date(b.createdAt).getTime())
+  const filteredConversations = conversations.filter(c =>
+    c.contractTitle.toLowerCase().includes(searchQuery.toLowerCase()) ||
+    c.otherPartyName.toLowerCase().includes(searchQuery.toLowerCase()),
+  )
 
-  const activeConv = convMap.get(activeContractId)
+  // Messages for selected conversation
+  const threadMessages = allMessages.filter(
+    m => (m.contractId || `direct-${[m.userId, m.recipientId].sort().join('-')}`) === selectedContractId,
+  )
 
+  // Determine recipientId for send
+  const recipientId = (() => {
+    const thread = threadMessages.find(m => m.userId !== user?.id)
+    if (thread) return thread.userId
+    return ''
+  })()
+
+  // Auto-scroll
   useEffect(() => {
-    msgEndRef.current?.scrollIntoView({ behavior: 'smooth' })
-  }, [threadMsgs.length])
+    messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' })
+  }, [threadMessages.length])
 
-  // Auto-select first conversation
+  // Mark messages as read when selecting conversation
   useEffect(() => {
-    if (!activeContractId && conversations.length > 0) {
-      setActiveContractId(conversations[0].contractId)
-    }
-  }, [conversations.length])
+    if (!selectedContractId || !user) return
+    const unread = threadMessages.filter(m => m.recipientId === user.id && m.isRead === '0')
+    Promise.all(unread.map(m => tables.messages.update(m.id, { isRead: '1' }))).then(() => {
+      if (unread.length > 0) qc.invalidateQueries({ queryKey: ['all-messages', user.id] })
+    })
+  }, [selectedContractId, threadMessages.length])
 
-  // Mark messages as read
-  useEffect(() => {
-    if (!activeContractId || !user?.id) return
-    const unread = (recvMsgs as Message[]).filter(m => m.contractId === activeContractId && m.isRead === '0')
-    unread.forEach(m => tables.messages.update(m.id, { isRead: '1' }).catch(() => {}))
-  }, [activeContractId, recvMsgs])
-
-  const sendMsg = useMutation({
-    mutationFn: async () => {
-      if (!msgText.trim() || !activeContractId) throw new Error('No message or contract')
-      const conv = convMap.get(activeContractId)
-      if (!conv) throw new Error('Conversation not found')
+  // Send message
+  const sendMutation = useMutation({
+    mutationFn: async (content: string) => {
+      if (!user || !selectedContractId || !content.trim()) throw new Error('Missing data')
+      const contractIdForDB = selectedContractId.startsWith('direct-') ? '' : selectedContractId
       await tables.messages.create({
-        userId: user!.id,
-        recipientId: conv.otherUserId,
-        contractId: activeContractId,
-        content: msgText.trim(),
+        userId: user.id,
+        recipientId,
+        contractId: contractIdForDB,
+        content: content.trim(),
         isRead: '0',
-        createdAt: new Date().toISOString(),
       })
-      setMsgText('')
     },
     onSuccess: () => {
-      qc.invalidateQueries({ queryKey: ['sentMessages', user?.id] })
+      setMessageText('')
+      qc.invalidateQueries({ queryKey: ['all-messages', user?.id] })
     },
-    onError: (e: Error) => toast.error(e.message),
+    onError: () => toast.error('Failed to send message'),
   })
 
-  if (!isAuthenticated) {
+  const handleSend = () => {
+    if (!messageText.trim() || !recipientId) return
+    sendMutation.mutate(messageText)
+  }
+
+  const handleKeyDown = (e: React.KeyboardEvent) => {
+    if (e.key === 'Enter' && !e.shiftKey) {
+      e.preventDefault()
+      handleSend()
+    }
+  }
+
+  if (isLoading) {
     return (
-      <div className="page-container pt-24 flex flex-col items-center justify-center py-24">
-        <MessageSquare size={48} className="text-muted-foreground mb-4" />
-        <h2 className="text-xl font-semibold mb-2">Sign In Required</h2>
-        <Button className="gradient-amber border-0 text-white" onClick={() => blink.auth.login()}>Sign In</Button>
+      <div className="flex items-center justify-center min-h-screen">
+        <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-primary" />
       </div>
     )
   }
 
   return (
-    <div className="page-container pt-24 animate-fade-in">
-      <h1 className="text-2xl font-bold text-foreground mb-6">Messages</h1>
+    <div className="page-container !py-0 !px-0 sm:!px-0 lg:!px-0">
+      <div className="flex h-[calc(100vh-4rem)] max-w-7xl mx-auto">
 
-      <div className="bg-card border border-border rounded-2xl overflow-hidden" style={{ height: 'calc(100vh - 220px)', minHeight: 500 }}>
-        <div className="flex h-full">
-          {/* Conversations list */}
-          <div className="w-72 border-r border-border flex flex-col shrink-0">
-            <div className="px-4 py-3 border-b border-border">
-              <p className="text-sm font-medium text-muted-foreground">Conversations</p>
-            </div>
-            <div className="flex-1 overflow-y-auto">
-              {conversations.length === 0 ? (
-                <div className="p-4 text-center">
-                  <MessageSquare size={32} className="mx-auto text-muted-foreground/30 mb-2" />
-                  <p className="text-xs text-muted-foreground">No conversations yet</p>
-                </div>
-              ) : (
-                conversations.map(conv => (
-                  <button
-                    key={conv.contractId}
-                    onClick={() => setActiveContractId(conv.contractId)}
-                    className={`w-full text-left px-4 py-3 hover:bg-muted/50 transition-colors flex items-start gap-3 ${
-                      activeContractId === conv.contractId ? 'bg-muted' : ''
-                    }`}
-                  >
-                    <Avatar className="w-9 h-9 shrink-0">
-                      <AvatarImage src={conv.otherUserAvatar} />
-                      <AvatarFallback className="text-xs gradient-hero text-white">
-                        {getInitials(conv.otherUserName)}
-                      </AvatarFallback>
-                    </Avatar>
-                    <div className="flex-1 min-w-0">
-                      <div className="flex items-center justify-between gap-1">
-                        <p className="text-xs font-medium truncate">{conv.otherUserName}</p>
-                        {conv.unread > 0 && (
-                          <span className="text-xs bg-accent text-white px-1.5 py-0.5 rounded-full shrink-0">{conv.unread}</span>
-                        )}
-                      </div>
-                      <p className="text-xs text-muted-foreground truncate">{conv.contractTitle}</p>
-                      <p className="text-xs text-muted-foreground/60 truncate mt-0.5">{conv.lastMessage}</p>
-                    </div>
-                  </button>
-                ))
-              )}
+        {/* ── Left Sidebar: Conversations ──────────────────────────────────── */}
+        <div className={`
+          w-full sm:w-80 lg:w-96 border-r border-border bg-card flex flex-col shrink-0
+          ${selectedContractId ? 'hidden sm:flex' : 'flex'}
+        `}>
+          {/* Header */}
+          <div className="p-4 border-b border-border">
+            <h2 className="text-lg font-bold text-foreground mb-3 flex items-center gap-2">
+              <MessageSquare size={20} className="text-primary" />
+              Messages
+            </h2>
+            <div className="relative">
+              <Search size={15} className="absolute left-3 top-1/2 -translate-y-1/2 text-muted-foreground" />
+              <Input
+                value={searchQuery}
+                onChange={e => setSearchQuery(e.target.value)}
+                placeholder="Search conversations..."
+                className="pl-9 h-9 text-sm"
+              />
             </div>
           </div>
 
-          {/* Message thread */}
-          <div className="flex-1 flex flex-col min-w-0">
-            {!activeContractId ? (
-              <div className="flex-1 flex items-center justify-center">
-                <EmptyState
-                  icon={MessageSquare}
-                  title="Select a conversation"
-                  description="Choose a conversation from the left to start messaging."
-                />
+          {/* Conversation list */}
+          <div className="flex-1 overflow-y-auto">
+            {msgsLoading ? (
+              <div>{Array.from({ length: 4 }).map((_, i) => <ConvSkeleton key={i} />)}</div>
+            ) : filteredConversations.length === 0 ? (
+              <div className="flex flex-col items-center justify-center h-full text-center p-8">
+                <MessageSquare size={40} className="text-muted-foreground opacity-30 mb-3" />
+                <p className="text-sm text-muted-foreground font-medium">No conversations yet</p>
+                <p className="text-xs text-muted-foreground mt-1">Messages from contracts will appear here</p>
               </div>
             ) : (
-              <>
-                {/* Header */}
-                <div className="px-5 py-3 border-b border-border flex items-center gap-3">
-                  {activeConv && (
+              filteredConversations.map(conv => (
+                <button
+                  key={conv.contractId}
+                  onClick={() => setSelectedContractId(conv.contractId)}
+                  className={`w-full p-4 flex gap-3 text-left hover:bg-muted/50 transition-colors border-b border-border/50 ${
+                    selectedContractId === conv.contractId ? 'bg-muted/60' : ''
+                  }`}
+                >
+                  {/* Avatar */}
+                  <div className="w-10 h-10 rounded-full gradient-amber flex items-center justify-center text-white text-sm font-bold shrink-0">
+                    {getInitials(conv.otherPartyName)}
+                  </div>
+                  <div className="flex-1 min-w-0">
+                    <div className="flex items-center justify-between gap-2 mb-0.5">
+                      <span className="text-sm font-semibold text-foreground truncate">{conv.otherPartyName}</span>
+                      <span className="text-[11px] text-muted-foreground shrink-0 flex items-center gap-1">
+                        <Clock size={10} />
+                        {formatRelativeTime(conv.lastMessageAt)}
+                      </span>
+                    </div>
+                    <p className="text-xs text-muted-foreground truncate">{conv.contractTitle}</p>
+                    <div className="flex items-center justify-between gap-2 mt-0.5">
+                      <p className="text-xs text-muted-foreground truncate flex-1">{conv.lastMessage}</p>
+                      {conv.unreadCount > 0 && (
+                        <span className="shrink-0 w-5 h-5 rounded-full gradient-amber text-white text-[10px] font-bold flex items-center justify-center">
+                          {conv.unreadCount > 9 ? '9+' : conv.unreadCount}
+                        </span>
+                      )}
+                    </div>
+                  </div>
+                </button>
+              ))
+            )}
+          </div>
+        </div>
+
+        {/* ── Right Panel: Chat Thread ──────────────────────────────────────── */}
+        <div className={`
+          flex-1 flex flex-col bg-background
+          ${!selectedContractId ? 'hidden sm:flex' : 'flex'}
+        `}>
+          {!selectedContractId ? (
+            <div className="flex-1 flex items-center justify-center">
+              <div className="text-center">
+                <div className="w-16 h-16 rounded-full bg-muted flex items-center justify-center mx-auto mb-4">
+                  <MessageSquare size={28} className="text-muted-foreground" />
+                </div>
+                <p className="text-foreground font-semibold">Select a conversation</p>
+                <p className="text-sm text-muted-foreground mt-1">Choose from your conversations on the left</p>
+              </div>
+            </div>
+          ) : (
+            <>
+              {/* Thread header */}
+              <div className="p-4 border-b border-border bg-card flex items-center gap-3">
+                <button
+                  onClick={() => setSelectedContractId(null)}
+                  className="sm:hidden text-muted-foreground hover:text-foreground"
+                >
+                  ←
+                </button>
+                {(() => {
+                  const conv = conversations.find(c => c.contractId === selectedContractId)
+                  return conv ? (
                     <>
-                      <Avatar className="w-8 h-8">
-                        <AvatarImage src={activeConv.otherUserAvatar} />
-                        <AvatarFallback className="text-xs gradient-hero text-white">
-                          {getInitials(activeConv.otherUserName)}
-                        </AvatarFallback>
-                      </Avatar>
+                      <div className="w-9 h-9 rounded-full gradient-amber flex items-center justify-center text-white text-sm font-bold">
+                        {getInitials(conv.otherPartyName)}
+                      </div>
                       <div>
-                        <p className="text-sm font-semibold">{activeConv.otherUserName}</p>
-                        <p className="text-xs text-muted-foreground">{activeConv.contractTitle}</p>
+                        <p className="font-semibold text-foreground text-sm">{conv.otherPartyName}</p>
+                        <p className="text-xs text-muted-foreground">{conv.contractTitle}</p>
                       </div>
                     </>
-                  )}
-                </div>
+                  ) : null
+                })()}
+              </div>
 
-                {/* Messages */}
-                <div className="flex-1 overflow-y-auto p-5 space-y-3">
-                  {threadMsgs.length === 0 ? (
-                    <p className="text-sm text-muted-foreground text-center py-8">Say hello!</p>
-                  ) : (
-                    threadMsgs.map(m => {
-                      const isMine = m.userId === user?.id
-                      const senderProfile = isMine ? null : profileMap.get(m.userId)
-                      return (
-                        <div key={m.id} className={`flex gap-2 ${isMine ? 'flex-row-reverse' : ''}`}>
-                          {!isMine && (
-                            <Avatar className="w-7 h-7 shrink-0">
-                              <AvatarImage src={senderProfile?.avatarUrl} />
-                              <AvatarFallback className="text-xs gradient-hero text-white">
-                                {getInitials(senderProfile?.displayName || 'U')}
-                              </AvatarFallback>
-                            </Avatar>
+              {/* Messages */}
+              <div className="flex-1 overflow-y-auto p-4 space-y-3">
+                {msgsLoading
+                  ? Array.from({ length: 4 }).map((_, i) => <MsgSkeleton key={i} />)
+                  : threadMessages.length === 0
+                  ? (
+                    <div className="text-center py-12">
+                      <p className="text-muted-foreground text-sm">No messages yet. Say hello! 👋</p>
+                    </div>
+                  )
+                  : threadMessages.map(msg => {
+                    const isOwn = msg.userId === user?.id
+                    return (
+                      <div key={msg.id} className={`flex gap-2 ${isOwn ? 'flex-row-reverse' : 'flex-row'}`}>
+                        {/* Avatar */}
+                        {!isOwn && (
+                          <div className="w-8 h-8 rounded-full bg-muted flex items-center justify-center text-xs font-bold text-muted-foreground shrink-0 mt-1">
+                            {getInitials(msg.senderName ?? 'U')}
+                          </div>
+                        )}
+                        <div className={`flex flex-col ${isOwn ? 'items-end' : 'items-start'} max-w-[70%]`}>
+                          {!isOwn && msg.senderName && (
+                            <span className="text-[11px] text-muted-foreground mb-1 px-1">{msg.senderName}</span>
                           )}
-                          <div className={`max-w-[75%] px-3.5 py-2.5 rounded-2xl text-sm ${
-                            isMine
-                              ? 'bg-primary text-primary-foreground rounded-tr-sm'
-                              : 'bg-muted text-foreground rounded-tl-sm'
-                          }`}>
-                            <p>{m.content}</p>
-                            <p className={`text-xs mt-1 ${isMine ? 'text-primary-foreground/50' : 'text-muted-foreground'}`}>
-                              {timeAgo(m.createdAt)}
-                            </p>
+                          <div
+                            className={`px-4 py-2.5 rounded-2xl text-sm leading-relaxed ${
+                              isOwn
+                                ? 'bg-primary text-primary-foreground rounded-tr-sm'
+                                : 'bg-card border border-border text-foreground rounded-tl-sm'
+                            }`}
+                          >
+                            {msg.content}
+                          </div>
+                          <div className={`flex items-center gap-1 mt-1 px-1 ${isOwn ? 'flex-row-reverse' : 'flex-row'}`}>
+                            <span className="text-[10px] text-muted-foreground">{formatRelativeTime(msg.createdAt)}</span>
+                            {isOwn && (
+                              <CheckCheck size={12} className={msg.isRead === '1' ? 'text-primary' : 'text-muted-foreground'} />
+                            )}
                           </div>
                         </div>
-                      )
-                    })
-                  )}
-                  <div ref={msgEndRef} />
-                </div>
+                      </div>
+                    )
+                  })
+                }
+                <div ref={messagesEndRef} />
+              </div>
 
-                {/* Input */}
-                <div className="px-4 py-3 border-t border-border flex gap-2">
-                  <Input
-                    placeholder="Type a message..."
-                    value={msgText}
-                    onChange={e => setMsgText(e.target.value)}
-                    onKeyDown={e => e.key === 'Enter' && !e.shiftKey && (e.preventDefault(), sendMsg.mutate())}
+              {/* Input */}
+              <div className="p-4 border-t border-border bg-card">
+                <div className="flex gap-2 items-end">
+                  <Textarea
+                    value={messageText}
+                    onChange={e => setMessageText(e.target.value)}
+                    onKeyDown={handleKeyDown}
+                    placeholder="Type a message… (Enter to send, Shift+Enter for newline)"
+                    className="resize-none min-h-[44px] max-h-32 text-sm flex-1"
+                    rows={1}
                   />
                   <Button
-                    className="gradient-amber border-0 text-white hover:opacity-90 shrink-0"
-                    onClick={() => sendMsg.mutate()}
-                    disabled={sendMsg.isPending || !msgText.trim()}
+                    onClick={handleSend}
+                    disabled={!messageText.trim() || !recipientId || sendMutation.isPending}
+                    className="gradient-amber text-white border-0 h-11 px-4 shrink-0"
                   >
                     <Send size={16} />
                   </Button>
                 </div>
-              </>
-            )}
-          </div>
+              </div>
+            </>
+          )}
         </div>
       </div>
     </div>
